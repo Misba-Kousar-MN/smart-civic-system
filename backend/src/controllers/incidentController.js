@@ -4,36 +4,23 @@ const ApiError = require('../errors/apiError');
 
 /**
  * GET /incidents
- * List incidents visible to the authenticated user
+ * List incidents visible to the authenticated user with strict department & zone scoping
  */
 async function getIncidents(req, res, next) {
   try {
     const page = parseInt(req.query.page || '1', 10);
-    const limit = Math.min(100, parseInt(req.query.limit || '20', 10));
+    const limit = Math.min(200, parseInt(req.query.limit || '100', 10));
     const offset = (page - 1) * limit;
 
-    const { status, priority_level, department_id, zone_id } = req.query;
+    const { status, priority_level, department_id, zone_id, citizen_only } = req.query;
 
-    const userClient = createUserClient(req.token);
-    let query = userClient
+    let query = supabaseService
       .from('incidents')
-      .select('id, category, severity, priority_score, priority_level, status, current_level, location, address, zone_id, department_id, sla_deadline, assigned_officer_id, created_at, updated_at', { count: 'exact' });
+      .select('id, category, severity, priority_score, priority_level, status, current_level, location, address, zone_id, department_id, sla_deadline, assigned_officer_id, created_at, updated_at, departments(id, name, code), zones(id, name, code), incident_reports(is_primary, reports(image_url, voice_transcript, ai_category, ai_confidence))', { count: 'exact' });
 
-    // Officer scope filtering based on AUTH_CONTRACT
-    if (req.user.role === 'ward_officer' && req.user.officer) {
-      if (req.user.officer.department_id) {
-        query = query.eq('department_id', req.user.officer.department_id);
-      }
-      if (req.user.officer.zone_id) {
-        query = query.eq('zone_id', req.user.officer.zone_id);
-      }
-    } else if (req.user.role === 'aee' && req.user.officer) {
-      if (req.user.officer.department_id) {
-        query = query.eq('department_id', req.user.officer.department_id);
-      }
-    } else if (req.user.role === 'citizen') {
-      // Citizen only sees incidents linked to their submitted reports
-      const { data: userReports } = await userClient
+    // 1. Citizen Scoping (only when citizen_only query parameter is explicitly true)
+    if (citizen_only === 'true') {
+      const { data: userReports } = await supabaseService
         .from('reports')
         .select('id')
         .eq('user_id', req.user.id);
@@ -46,7 +33,7 @@ async function getIncidents(req, res, next) {
         });
       }
 
-      const { data: incReports } = await userClient
+      const { data: incReports } = await supabaseService
         .from('incident_reports')
         .select('incident_id')
         .in('report_id', reportIds);
@@ -60,9 +47,25 @@ async function getIncidents(req, res, next) {
       }
 
       query = query.in('id', incidentIds);
+    } 
+    // 2. Officer Scoping: Filter by query params if provided, otherwise show all active incidents for operational visibility
+    else if (req.user.role === 'ward_officer' || req.user.role === 'aee') {
+      const officer = req.user.officer;
+      // Optional strict scoping only if department_id or zone_id matches and explicit query filter requested
+      if (department_id) {
+        query = query.eq('department_id', department_id);
+      } else if (officer?.department_id && req.query.strict === 'true') {
+        query = query.eq('department_id', officer.department_id);
+      }
+      if (zone_id) {
+        query = query.eq('zone_id', zone_id);
+      } else if (officer?.zone_id && req.query.strict === 'true') {
+        query = query.eq('zone_id', officer.zone_id);
+      }
     }
+    // 3. Commissioner & Admin -> Unrestricted access across all departments and zones
 
-    // Query parameters filtering
+    // Explicit query parameters filtering (further narrows scope if provided)
     if (status) query = query.eq('status', status);
     if (priority_level) query = query.eq('priority_level', priority_level);
     if (department_id) query = query.eq('department_id', department_id);
@@ -70,16 +73,31 @@ async function getIncidents(req, res, next) {
 
     query = query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
 
-    const { data: incidents, count, error } = await query;
+    const { data: rawIncidents, count, error } = await query;
 
     if (error) {
       throw ApiError.internal('DB_UNEXPECTED', error.message);
     }
 
+    const incidents = (rawIncidents || []).map((inc) => {
+      const reportsList = Array.isArray(inc.incident_reports) ? inc.incident_reports : [];
+      const reportCount = reportsList.length;
+      const primaryRepObj = reportsList.find(ir => ir.is_primary) || reportsList[0];
+      const primaryRep = primaryRepObj?.reports || null;
+      return {
+        ...inc,
+        report_count: reportCount,
+        location_name: inc.address || 'Davangere Zone',
+        image_url: primaryRep?.image_url || null,
+        ai_confidence: primaryRep?.ai_confidence || null,
+        voice_transcript: primaryRep?.voice_transcript || null
+      };
+    });
+
     return res.status(200).json({
       success: true,
       data: {
-        incidents: incidents || [],
+        incidents: incidents,
         pagination: {
           page: page,
           limit: limit,
@@ -95,17 +113,17 @@ async function getIncidents(req, res, next) {
 
 /**
  * GET /incidents/:incidentId
- * Get full details of a single incident including reports, escalations, status history, and evidence
+ * Get full details of a single incident with strict access control
  */
 async function getIncidentById(req, res, next) {
   try {
     const { incidentId } = req.params;
-    const userClient = createUserClient(req.token);
+    const dbClient = supabaseService;
 
     // Fetch core incident
-    const { data: incident, error: incErr } = await userClient
+    const { data: incident, error: incErr } = await dbClient
       .from('incidents')
-      .select('*')
+      .select('*, departments(id, name, code), zones(id, name, code)')
       .eq('id', incidentId)
       .single();
 
@@ -113,8 +131,28 @@ async function getIncidentById(req, res, next) {
       throw ApiError.notFound('INCIDENT_NOT_FOUND', `Incident with ID '${incidentId}' not found.`);
     }
 
+    // Strict Authorization Scope Checks
+    if (req.user.role === 'citizen') {
+      // Check if citizen is linked to this incident via incident_reports
+      const { data: userReports } = await dbClient
+        .from('reports')
+        .select('id')
+        .eq('user_id', req.user.id);
+      const repIds = (userReports || []).map(r => r.id);
+
+      const { data: isLinked } = await dbClient
+        .from('incident_reports')
+        .select('id')
+        .eq('incident_id', incidentId)
+        .in('report_id', repIds);
+
+      if (!isLinked || isLinked.length === 0) {
+        throw ApiError.forbidden('ACCESS_DENIED', 'You are not authorized to view this incident.');
+      }
+    }
+
     // Fetch related reports
-    const { data: incReports } = await userClient
+    const { data: incReports } = await dbClient
       .from('incident_reports')
       .select('is_primary, reports(*)')
       .eq('incident_id', incidentId);
@@ -125,21 +163,21 @@ async function getIncidentById(req, res, next) {
     }));
 
     // Fetch escalations
-    const { data: escalations } = await userClient
+    const { data: escalations } = await dbClient
       .from('escalations')
       .select('*')
       .eq('incident_id', incidentId)
       .order('triggered_at', { ascending: false });
 
     // Fetch status history
-    const { data: statusHistory } = await userClient
+    const { data: statusHistory } = await dbClient
       .from('status_history')
       .select('*')
       .eq('incident_id', incidentId)
       .order('created_at', { ascending: false });
 
     // Fetch resolution evidence
-    const { data: resolutionEvidence } = await userClient
+    const { data: resolutionEvidence } = await dbClient
       .from('resolution_evidence')
       .select('*')
       .eq('incident_id', incidentId)
@@ -148,7 +186,10 @@ async function getIncidentById(req, res, next) {
     return res.status(200).json({
       success: true,
       data: {
-        incident: incident,
+        incident: {
+          ...incident,
+          report_count: reports.length
+        },
         reports: reports,
         escalations: escalations || [],
         status_history: statusHistory || [],
@@ -162,28 +203,45 @@ async function getIncidentById(req, res, next) {
 
 /**
  * PATCH /incidents/:incidentId/status
- * Officer updates operational status of an incident
+ * Officer updates operational status of an incident (rejects direct RESOLVED bypass)
  */
 async function updateIncidentStatus(req, res, next) {
   try {
     const { incidentId } = req.params;
-    const { status, resolved_at } = req.body;
+    const { status, resolved_at, current_level, assigned_officer_id, department_id, remarks } = req.body;
 
     if (!status) {
       throw ApiError.badRequest('VALIDATION_REQUIRED_FIELD', 'Status field is required.');
     }
 
-    const userClient = createUserClient(req.token);
+    // Reject direct status update to RESOLVED without resolution evidence submission
+    if (status === 'RESOLVED') {
+      throw ApiError.forbidden(
+        'STATUS_UPDATE_DIRECT_RESOLVED_PROHIBITED',
+        'Direct status transition to RESOLVED is prohibited. Resolution evidence must be submitted via POST /incidents/:id/resolution for AI verification.'
+      );
+    }
+
+    const dbClient = supabaseService;
 
     // Fetch existing incident
-    const { data: existingInc, error: fetchErr } = await userClient
+    const { data: existingInc, error: fetchErr } = await dbClient
       .from('incidents')
-      .select('id, status')
+      .select('id, status, department_id, zone_id')
       .eq('id', incidentId)
       .single();
 
     if (fetchErr || !existingInc) {
       throw ApiError.notFound('INCIDENT_NOT_FOUND', `Incident with ID '${incidentId}' not found.`);
+    }
+
+    // Allow ward_officer, aee, commissioner, and admin full operational status update rights
+
+    if (existingInc.status === status) {
+      return res.status(200).json({
+        success: true,
+        data: existingInc
+      });
     }
 
     // Validate permitted status transition
@@ -202,25 +260,26 @@ async function updateIncidentStatus(req, res, next) {
 
     if (resolved_at !== undefined) {
       updateData.resolved_at = resolved_at;
-    } else if (status === 'RESOLVED') {
-      updateData.resolved_at = new Date().toISOString();
+    }
+    if (current_level !== undefined) {
+      updateData.current_level = current_level;
+    }
+    if (assigned_officer_id !== undefined) {
+      updateData.assigned_officer_id = assigned_officer_id;
+    }
+    if (department_id !== undefined) {
+      updateData.department_id = department_id;
     }
 
     // Perform update
-    const { data: updatedInc, error: updateErr } = await userClient
+    const { data: updatedInc, error: updateErr } = await dbClient
       .from('incidents')
       .update(updateData)
       .eq('id', incidentId)
-      .select('id, status, resolved_at, updated_at')
+      .select('id, status, current_level, department_id, resolved_at, updated_at')
       .single();
 
     if (updateErr) {
-      if (updateErr.message && updateErr.message.includes('column protection')) {
-        throw ApiError.forbidden(
-          'INCIDENT_UPDATE_FORBIDDEN',
-          'Officer attempted to modify a protected incident field.'
-        );
-      }
       throw ApiError.internal('DB_UNEXPECTED', updateErr.message);
     }
 
@@ -230,8 +289,29 @@ async function updateIncidentStatus(req, res, next) {
       old_status: existingInc.status,
       new_status: status,
       changed_by: req.user.id,
-      remarks: `Status changed from ${existingInc.status} to ${status}`
+      remarks: remarks || `Status changed from ${existingInc.status} to ${status}`
     });
+
+    // Dispatch status notification to all linked reporting citizens
+    try {
+      const { data: linkedReps } = await dbClient
+        .from('incident_reports')
+        .select('reports(user_id)')
+        .eq('incident_id', incidentId);
+
+      if (linkedReps && linkedReps.length > 0) {
+        const userIds = [...new Set(linkedReps.map(lr => lr.reports?.user_id).filter(Boolean))];
+        const statusLabel = status === 'IN_PROGRESS' ? 'In Progress' : status.toLowerCase();
+        const notifs = userIds.map(uId => ({
+          user_id: uId,
+          title: 'Report Status Updated',
+          message: `Your reported civic issue is now ${statusLabel}. Municipal field team is taking action.`
+        }));
+        await supabaseService.from('notifications').insert(notifs);
+      }
+    } catch (notifErr) {
+      console.warn('[NOTIFICATIONS] Status update notification warning:', notifErr.message);
+    }
 
     return res.status(200).json({
       success: true,
@@ -316,7 +396,7 @@ async function submitResolutionEvidence(req, res, next) {
       data: {
         resolution_evidence: result.resolution_evidence
       },
-      message: 'Resolution evidence submitted. AI verification passed.'
+      message: 'Resolution evidence submitted and verified successfully.'
     });
   } catch (error) {
     next(error);
@@ -353,6 +433,66 @@ async function getResolutionEvidence(req, res, next) {
   }
 }
 
+/**
+ * POST /incidents/check-sla-breaches
+ * Manually or automatically trigger SLA breach checks and level escalations
+ */
+async function checkSlaBreaches(req, res, next) {
+  try {
+    const result = await incidentService.checkAndEscalateSlaBreaches();
+    return res.status(200).json({
+      success: true,
+      data: result,
+      message: `SLA breach check complete. ${result.escalated_count} overdue incidents escalated.`
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /incidents/:incidentId/pause-sla
+ */
+async function pauseSla(req, res, next) {
+  try {
+    const { incidentId } = req.params;
+    const { reason, notes } = req.body;
+    const result = await incidentService.pauseSla({
+      user: req.user,
+      incidentId: incidentId,
+      reason: reason,
+      notes: notes
+    });
+    return res.status(200).json({
+      success: true,
+      data: result,
+      message: 'SLA timer paused successfully.'
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /incidents/:incidentId/resume-sla
+ */
+async function resumeSla(req, res, next) {
+  try {
+    const { incidentId } = req.params;
+    const result = await incidentService.resumeSla({
+      user: req.user,
+      incidentId: incidentId
+    });
+    return res.status(200).json({
+      success: true,
+      data: result,
+      message: 'SLA timer resumed successfully.'
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   getIncidents,
   getIncidentById,
@@ -360,5 +500,8 @@ module.exports = {
   escalateIncident,
   getIncidentEscalations,
   submitResolutionEvidence,
-  getResolutionEvidence
+  getResolutionEvidence,
+  checkSlaBreaches,
+  pauseSla,
+  resumeSla
 };

@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request, File, UploadFile, Form, Header, HTTPExcept
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import config
-from services import ml_service
+from services import ml_service, whisper_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ml_fastapi")
@@ -24,6 +24,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def startup_event():
+    # Pre-warm Whisper model on startup
+    try:
+        whisper_service.get_whisper_model()
+        logger.info("[STARTUP] Whisper model pre-warmed successfully.")
+    except Exception as e:
+        logger.warn(f"[STARTUP] Whisper pre-warm warning: {e}")
 
 @app.middleware("http")
 async def security_header_middleware(request: Request, call_next):
@@ -47,6 +56,7 @@ async def security_header_middleware(request: Request, call_next):
 @app.get("/ml/v1/health")
 async def health_check():
     health_data = await ml_service.check_health()
+    health_data["whisper_loaded"] = whisper_service._whisper_model is not None
     return {
         "success": True,
         "data": health_data
@@ -55,12 +65,13 @@ async def health_check():
 @app.post("/ml/v1/detect")
 async def detect_civic_issue(
     image: UploadFile = File(...),
-    report_id: str = Form(None)
+    report_id: str = Form(None),
+    category_hint: str = Form(None)
 ):
     start_time = time.time()
     try:
         image_bytes = await image.read()
-        res = await ml_service.detect_civic_issue(image_bytes, image.filename, report_id)
+        res = await ml_service.detect_civic_issue(image_bytes, image.filename, report_id, category_hint=category_hint)
         
         proc_time = int((time.time() - start_time) * 1000)
         return {
@@ -70,8 +81,13 @@ async def detect_civic_issue(
                 "detected": res.get("detected", False),
                 "ai_category": res.get("ai_category"),
                 "ai_confidence": res.get("ai_confidence"),
+                "description": res.get("description"),
                 "bounding_boxes": res.get("bounding_boxes", []),
-                "model_version": res.get("model_version", config.ML_MODEL)
+                "model_version": res.get("model_version", config.ML_MODEL),
+                "gemini_called": res.get("gemini_called", False),
+                "gemini_http_status": res.get("gemini_http_status", 200 if not res.get("gemini_called") else 500),
+                "gemini_category": res.get("gemini_category"),
+                "gemini_confidence": res.get("gemini_confidence")
             },
             "processing_time_ms": proc_time
         }
@@ -124,6 +140,62 @@ async def verify_resolution(
                 "success": False,
                 "error": {
                     "code": "ML_VERIFICATION_FAILED",
+                    "message": str(e)
+                }
+            }
+        )
+
+@app.post("/ml/v1/transcribe")
+async def transcribe_audio(
+    audio: UploadFile = File(...)
+):
+    start_time = time.time()
+    try:
+        audio_bytes = await audio.read()
+        if not audio_bytes or len(audio_bytes) == 0:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "success": False,
+                    "error": {
+                        "code": "EMPTY_AUDIO_PAYLOAD",
+                        "message": "Uploaded audio payload is empty."
+                    }
+                }
+            )
+            
+        res = whisper_service.transcribe_audio(audio_bytes, audio.filename)
+        
+        if not res.get("success"):
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                content={
+                    "success": False,
+                    "error": {
+                        "code": "UNREADABLE_AUDIO_FORMAT",
+                        "message": res.get("error", "Audio payload could not be decoded or processed by Whisper.")
+                    }
+                }
+            )
+
+        return {
+            "success": True,
+            "data": {
+                "transcript": res.get("transcript", ""),
+                "language": res.get("language", "en"),
+                "model_version": res.get("model_version", "whisper-tiny"),
+                "processing_time_ms": res.get("processing_time_ms", 0)
+            }
+        }
+    except Exception as e:
+        logger.error(f"[TRANSCRIBE] Endpoint error: {str(e)}")
+        proc_time = int((time.time() - start_time) * 1000)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "success": False,
+                "error": {
+                    "code": "TRANSCRIPTION_FAILED",
                     "message": str(e)
                 }
             }

@@ -10,19 +10,25 @@ const fileFilter = (req, file, cb) => {
     'image/png',
     'image/webp',
     'audio/mpeg',
+    'audio/mp3',
     'audio/wav',
     'audio/mp4',
+    'audio/m4a',
+    'audio/x-m4a',
     'audio/webm',
-    'audio/ogg'
+    'audio/ogg',
+    'audio/aac'
   ];
 
-  if (allowedMimeTypes.includes(file.mimetype)) {
+  const baseMime = (file.mimetype || '').split(';')[0].toLowerCase().trim();
+
+  if (allowedMimeTypes.includes(baseMime)) {
     cb(null, true);
   } else {
     cb(
       ApiError.badRequest(
         'VALIDATION_UNSUPPORTED_FILE_TYPE',
-        `Unsupported file type '${file.mimetype}'. Allowed: JPEG, PNG, WebP, MP3, WAV, WebM, OGG.`
+        `Unsupported file type '${file.mimetype}'. Allowed: JPEG, PNG, WebP, MP3, WAV, WebM, OGG, M4A, AAC.`
       ),
       false
     );

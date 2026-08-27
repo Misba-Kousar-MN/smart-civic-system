@@ -1,4 +1,13 @@
 {
+  "name": "smart-civic-system",
+  "private": true,
+  "scripts": {
+    "dev:citizen": "npm --prefix frontend run dev",
+    "dev:officer": "npm --prefix officer-frontend run dev",
+    "dev:backend": "npm --prefix backend run dev",
+    "build:citizen": "npm --prefix frontend run build",
+    "build:officer": "npm --prefix officer-frontend run build"
+  },
   "devDependencies": {
     "supabase": "^2.114.0"
   }

@@ -5,5 +5,6 @@ const profileController = require('../controllers/profileController');
 
 router.get('/me', authenticate, profileController.getMyProfile);
 router.patch('/me', authenticate, profileController.updateMyProfile);
+router.post('/provision-officer', authenticate, profileController.provisionOfficer);
 
 module.exports = router;

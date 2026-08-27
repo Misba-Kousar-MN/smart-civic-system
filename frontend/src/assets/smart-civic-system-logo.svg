@@ -1,0 +1,46 @@
+<svg width="340" height="90" viewBox="0 0 340 90" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Symbol Embedded -->
+  <g transform="translate(4, 5)">
+    <!-- Outer Organic Botanical Enclosure -->
+    <path d="M40 6C58 6 71 19 71 39C71 57 57 71 40 71C22 71 9 57 9 39C9 19 22 6 40 6Z" stroke="#236A48" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="65 8 30 8" fill="#F4F8F4" />
+    
+    <!-- Secondary City Buildings -->
+    <rect x="22" y="34" width="10" height="23" rx="1.5" fill="#A8C9B1" />
+    <rect x="25" y="38" width="1.8" height="3" fill="#FFFFFF" opacity="0.8" />
+    <rect x="28" y="38" width="1.8" height="3" fill="#FFFFFF" opacity="0.8" />
+    <rect x="25" y="44" width="1.8" height="3" fill="#FFFFFF" opacity="0.8" />
+    <rect x="28" y="44" width="1.8" height="3" fill="#FFFFFF" opacity="0.8" />
+
+    <rect x="48" y="31" width="11" height="26" rx="1.5" fill="#3C8A68" />
+    <rect x="50.5" y="35" width="2" height="4" fill="#DDEBE0" />
+    <rect x="54" y="35" width="2" height="4" fill="#DDEBE0" />
+    <rect x="50.5" y="42" width="2" height="4" fill="#DDEBE0" />
+    <rect x="54" y="42" width="2" height="4" fill="#DDEBE0" />
+
+    <!-- Central Tall Civic Building / Tower -->
+    <rect x="33" y="19" width="14" height="39" rx="2" fill="#174D38" />
+    <!-- Spire / Dome Accent -->
+    <path d="M38 13L40 8L42 13H38Z" fill="#236A48" />
+    <rect x="39" y="13" width="2" height="6" fill="#174D38" />
+    
+    <!-- Tower Windows -->
+    <rect x="36" y="23" width="3" height="5" rx="0.8" fill="#FFFFFF" opacity="0.9" />
+    <rect x="41" y="23" width="3" height="5" rx="0.8" fill="#FFFFFF" opacity="0.9" />
+    <rect x="36" y="31" width="3" height="5" rx="0.8" fill="#FFFFFF" opacity="0.9" />
+    <rect x="41" y="31" width="3" height="5" rx="0.8" fill="#FFFFFF" opacity="0.9" />
+    <rect x="36" y="39" width="3" height="5" rx="0.8" fill="#FFFFFF" opacity="0.9" />
+    <rect x="41" y="39" width="3" height="5" rx="0.8" fill="#FFFFFF" opacity="0.9" />
+
+    <!-- Base Cradling Leaves -->
+    <path d="M13 55C18 45 29 44 35 53C27 62 18 61 13 55Z" fill="#3C8A68" />
+    <path d="M20 62C26 49 39 47 40 59C30 68 22 67 20 62Z" fill="#236A48" />
+
+    <path d="M67 55C62 45 51 44 45 53C53 62 62 61 67 55Z" fill="#3C8A68" />
+    <path d="M60 62C54 49 41 47 40 59C50 68 58 67 60 62Z" fill="#236A48" />
+  </g>
+
+  <!-- Wordmark Text Group -->
+  <text x="96" y="36" fill="#174D38" font-family="'Inter', 'Manrope', 'Poppins', sans-serif" font-weight="800" font-size="22" letter-spacing="-0.02em">SMART</text>
+  <text x="96" y="58" fill="#174D38" font-family="'Inter', 'Manrope', 'Poppins', sans-serif" font-weight="800" font-size="20" letter-spacing="-0.02em">CIVIC SYSTEM</text>
+  <text x="96" y="74" fill="#60736A" font-family="'Inter', sans-serif" font-weight="500" font-size="11">Together for a cleaner, safer city</text>
+</svg>

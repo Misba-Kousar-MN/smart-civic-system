@@ -54,7 +54,7 @@ export const AuthProvider = ({ children }) => {
     return data;
   };
 
-  const register = async (email, password, fullName) => {
+  const register = async (email, password, fullName, role = 'citizen', officerDetails = null) => {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -63,8 +63,34 @@ export const AuthProvider = ({ children }) => {
       }
     });
     if (error) throw error;
-    if (data?.session) {
+    if (data?.session && data?.user) {
       setSession(data.session);
+
+      if (role && role !== 'citizen') {
+        try {
+          // Update profile role in Supabase DB
+          await supabase
+            .from('profiles')
+            .update({ role: role })
+            .eq('id', data.user.id);
+
+          // Insert into officers table if level is provided
+          const levelMap = { ward_officer: 1, aee: 2, commissioner: 3 };
+          const level = levelMap[role] || 1;
+
+          await supabase
+            .from('officers')
+            .insert({
+              profile_id: data.user.id,
+              level: level,
+              department_id: officerDetails?.department_id || null,
+              zone_id: officerDetails?.zone_id || null
+            });
+        } catch (roleErr) {
+          console.warn('[AUTH] Error setting officer role:', roleErr);
+        }
+      }
+
       await fetchUserProfile();
     }
     return data;

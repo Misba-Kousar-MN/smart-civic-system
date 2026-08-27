@@ -5,6 +5,7 @@ const { resolutionUpload } = require('../middleware/uploadMiddleware');
 const incidentController = require('../controllers/incidentController');
 
 router.get('/', authenticate, incidentController.getIncidents);
+router.post('/check-sla-breaches', authenticate, incidentController.checkSlaBreaches);
 router.get('/:incidentId', authenticate, incidentController.getIncidentById);
 
 router.patch(
@@ -40,6 +41,20 @@ router.get(
   '/:incidentId/resolution',
   authenticate,
   incidentController.getResolutionEvidence
+);
+
+router.post(
+  '/:incidentId/pause-sla',
+  authenticate,
+  authorize('ward_officer', 'aee', 'commissioner', 'admin'),
+  incidentController.pauseSla
+);
+
+router.post(
+  '/:incidentId/resume-sla',
+  authenticate,
+  authorize('ward_officer', 'aee', 'commissioner', 'admin'),
+  incidentController.resumeSla
 );
 
 module.exports = router;

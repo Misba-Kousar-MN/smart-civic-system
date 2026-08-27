@@ -6,7 +6,15 @@ class BaseMlProvider(ABC):
         self.name = name
 
     @abstractmethod
-    async def detect_civic_issue(self, image_bytes: bytes, original_filename: str, report_id: str) -> Dict[str, Any]:
+    async def detect_civic_issue(
+        self, 
+        image_bytes: bytes, 
+        original_filename: str, 
+        report_id: str, 
+        category_hint: str = None,
+        yolo_candidate_category: str = None,
+        yolo_candidate_confidence: float = None
+    ) -> Dict[str, Any]:
         pass
 
     @abstractmethod

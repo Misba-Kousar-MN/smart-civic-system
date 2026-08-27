@@ -19,7 +19,7 @@ const CANONICAL_CATEGORIES = [
 /**
  * Detect civic issue by calling the FastAPI ML Service over HTTP
  */
-async function detectCivicIssue(imageBuffer, originalFilename, reportId) {
+async function detectCivicIssue(imageBuffer, originalFilename, reportId, categoryHint) {
   try {
     const formData = new FormData();
     formData.append('image', imageBuffer, {
@@ -28,6 +28,9 @@ async function detectCivicIssue(imageBuffer, originalFilename, reportId) {
     });
     if (reportId) {
       formData.append('report_id', reportId);
+    }
+    if (categoryHint) {
+      formData.append('category_hint', categoryHint);
     }
 
     const response = await axios.post(`${env.ML_SERVICE_URL}/detect`, formData, {
@@ -43,9 +46,15 @@ async function detectCivicIssue(imageBuffer, originalFilename, reportId) {
       return {
         detected: Boolean(mlData.detected),
         ai_category: mlData.ai_category || null,
-        ai_confidence: mlData.ai_confidence || null,
+        ai_confidence: typeof mlData.ai_confidence === 'number' ? mlData.ai_confidence : null,
+        description: mlData.description || null,
         bounding_boxes: mlData.bounding_boxes || [],
-        model_version: mlData.model_version || 'fastapi-ml-v1'
+        model_version: mlData.model_version || 'fastapi-ml-v1',
+        error: mlData.error || null,
+        gemini_called: Boolean(mlData.gemini_called),
+        gemini_http_status: mlData.gemini_http_status ?? 200,
+        gemini_category: mlData.gemini_category ?? null,
+        gemini_confidence: mlData.gemini_confidence ?? null
       };
     }
   } catch (err) {
@@ -56,13 +65,16 @@ async function detectCivicIssue(imageBuffer, originalFilename, reportId) {
     detected: false,
     ai_category: null,
     ai_confidence: null,
+    description: null,
     bounding_boxes: [],
-    model_version: 'fastapi-ml-fallback'
+    model_version: 'fastapi-ml-fallback',
+    error: 'AI_UNAVAILABLE'
   };
 }
 
 /**
  * Verify resolution evidence by calling the FastAPI ML Service over HTTP
+ * STRICT SAFETY RULE: AI VERIFICATION MUST FAIL CLOSED
  */
 async function verifyResolution(beforeBuffer, afterBuffer, incidentId, aiCategory) {
   try {
@@ -86,20 +98,67 @@ async function verifyResolution(beforeBuffer, afterBuffer, incidentId, aiCategor
       const mlData = response.data.data;
       return {
         ai_verification_passed: Boolean(mlData.ai_verification_passed),
-        ai_confidence: mlData.ai_confidence || 80.0,
-        comparison_notes: mlData.comparison_notes || 'Resolution evidence verified by FastAPI ML service.',
+        ai_confidence: mlData.ai_confidence || 0.0,
+        comparison_notes: mlData.comparison_notes || 'Resolution evidence processed by FastAPI ML service.',
         model_version: mlData.model_version || 'fastapi-ml-v1'
       };
     }
   } catch (err) {
-    console.error(`[ML_CLIENT] Error communicating with FastAPI resolution service (${err.message}). Defaulting.`);
+    console.error(`[ML_CLIENT] Error communicating with FastAPI resolution service (${err.message}). Failing closed.`);
+  }
+
+  // STRICT FAIL CLOSED ON ERROR / TIMEOUT / UNHEALTHY ML SERVICE
+  return {
+    ai_verification_passed: false,
+    ai_confidence: 0.0,
+    comparison_notes: 'AI resolution verification service unavailable or failed. Failed closed.',
+    model_version: 'fastapi-ml-failclosed'
+  };
+}
+
+/**
+ * Transcribe audio voice note by calling FastAPI ML Service /ml/v1/transcribe over HTTP
+ */
+async function transcribeAudio(audioBuffer, filename) {
+  try {
+    const formData = new FormData();
+    const cleanFilename = (filename || 'voice_note.webm').split(';')[0].trim();
+    const rawExt = cleanFilename.split('.').pop() || 'webm';
+    const ext = rawExt.toLowerCase();
+    const contentType = ext === 'wav' ? 'audio/wav' : ext === 'mp4' ? 'audio/mp4' : ext === 'ogg' ? 'audio/ogg' : 'audio/webm';
+
+    formData.append('audio', audioBuffer, {
+      filename: cleanFilename,
+      contentType: contentType
+    });
+
+    const response = await axios.post(`${env.ML_SERVICE_URL}/transcribe`, formData, {
+      headers: {
+        ...formData.getHeaders(),
+        'X-Internal-API-Key': env.ML_INTERNAL_API_KEY
+      },
+      timeout: 30000
+    });
+
+    if (response.data && response.data.success && response.data.data) {
+      const mlData = response.data.data;
+      return {
+        success: true,
+        transcript: mlData.transcript || '',
+        language: mlData.language || 'en',
+        model_version: mlData.model_version || 'whisper-tiny',
+        processing_time_ms: mlData.processing_time_ms || 0
+      };
+    }
+  } catch (err) {
+    console.error(`[ML_CLIENT] Error communicating with FastAPI transcription service (${err.message}).`);
   }
 
   return {
-    ai_verification_passed: true,
-    ai_confidence: 80.0,
-    comparison_notes: 'Resolution evidence accepted (FastAPI ML fallback).',
-    model_version: 'fastapi-ml-fallback'
+    success: false,
+    transcript: null,
+    language: null,
+    model_version: 'whisper-failed'
   };
 }
 
@@ -125,5 +184,6 @@ module.exports = {
   CANONICAL_CATEGORIES,
   detectCivicIssue,
   verifyResolution,
+  transcribeAudio,
   checkHealth
 };

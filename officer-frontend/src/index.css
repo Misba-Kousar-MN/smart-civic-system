@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    
+    /* Soft Pastel Mint Green Palette Tokens */
+    --pastel-mint-bg:       #F0F8F5;
+    --pastel-mint-surface:  #E6F4ED;
+    --pastel-mint-card:     #DCF0E6;
+    --pastel-mint-highlight:#CEEADA;
+    --pastel-mint-border:   #B8E0CB;
+    
+    /* Soft Botanical Primary Greens */
+    --pastel-green-dark:    #1F5443;
+    --pastel-green-primary: #349670;
+    --pastel-green-light:   #5EB894;
+    --pastel-green-soft:    #C8EAD9;
+    
+    /* Typography */
+    --dark-text:            #174437;
+    --secondary-text:       #4A7365;
+    --muted-text:           #75998C;
+    --white:                #FFFFFF;
+
+    /* Semantic Status Badges */
+    --status-open-bg:       #DCF0E6;
+    --status-open-text:     #216D51;
+    --status-progress-bg:   #E2EEF8;
+    --status-progress-text: #326F9C;
+    --status-escalated-bg:  #EFE3F5;
+    --status-escalated-text:#734785;
+    --status-resolved-bg:   #D5EFE1;
+    --status-resolved-text: #216D51;
+    --status-reopened-bg:   #FAECEB;
+    --status-reopened-text: #A6473D;
+
+    /* Priority Badges */
+    --priority-critical-bg: #FAECEB;
+    --priority-critical-text:#A6473D;
+    --priority-high-bg:     #F8ECD9;
+    --priority-high-text:   #9C621E;
+    --priority-medium-bg:   #F5F0D5;
+    --priority-medium-text: #826E1D;
+    --priority-low-bg:      #DCF0E6;
+    --priority-low-text:    #296F53;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--pastel-mint-bg);
+    color: var(--dark-text);
+    min-height: 100vh;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Custom Scrollbars */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #B8E0CB;
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #349670;
+}
+
+/* Leaflet Container Overrides */
+.leaflet-container {
+  font-family: inherit;
+  border-radius: 1.125rem;
+  z-index: 10;
+}

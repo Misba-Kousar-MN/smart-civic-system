@@ -3,25 +3,25 @@ import { useParams, Link } from 'react-router-dom';
 import {
   ArrowLeft,
   MapPin,
-  Calendar,
-  CheckCircle2,
-  Sparkles,
+  Check,
   Volume2,
-  Share2,
-  Building2,
-  UserCheck,
-  Brain,
-  Clock,
-  ShieldCheck,
-  Check
+  Phone,
+  Bell,
+  Users
 } from 'lucide-react';
 import { reportApi } from '../api/reportApi';
 import { incidentApi } from '../api/incidentApi';
 import StatusBadge from '../components/StatusBadge';
-import PriorityBadge from '../components/PriorityBadge';
-import SlaTimer from '../components/SlaTimer';
 import InteractiveMap from '../components/InteractiveMap';
 import { parseCoordinates, formatCoordinates } from '../utils/locationUtils';
+import { supabase } from '../config/supabase';
+
+const TRACKING_STEPS = [
+  { key: 'OPEN', label: 'Submitted' },
+  { key: 'REVIEWED', label: 'Assigned' },
+  { key: 'IN_PROGRESS', label: 'In Progress' },
+  { key: 'RESOLVED', label: 'Resolved' }
+];
 
 const ReportDetailPage = () => {
   const { reportId } = useParams();
@@ -29,296 +29,275 @@ const ReportDetailPage = () => {
   const [incidentData, setIncidentData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [isNotified, setIsNotified] = useState(false);
 
-  useEffect(() => {
-    const fetchDetails = async () => {
-      try {
-        setLoading(true);
-        setError('');
-        const repRes = await reportApi.getReportById(reportId);
-        if (repRes?.success && repRes?.data) {
-          setReport(repRes.data);
+  const fetchDetails = async () => {
+    try {
+      setLoading(true);
+      setError('');
+      const repRes = await reportApi.getReportById(reportId);
+      if (repRes?.success && repRes?.data) {
+        setReport(repRes.data);
 
-          if (repRes.data.incident_id) {
-            const incRes = await incidentApi.getIncidentById(repRes.data.incident_id);
-            if (incRes?.success && incRes?.data) {
-              setIncidentData(incRes.data);
-            }
+        if (repRes.data.incident_id) {
+          const incRes = await incidentApi.getIncidentById(repRes.data.incident_id);
+          if (incRes?.success && incRes?.data) {
+            setIncidentData(incRes.data);
           }
         }
-      } catch (err) {
-        setError(err.message || 'Failed to load report details.');
-      } finally {
-        setLoading(false);
       }
-    };
+    } catch (err) {
+      setError(err.message || 'Failed to load report details.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchDetails();
+
+    const channel = supabase
+      .channel(`report-detail-${reportId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'reports', filter: `id=eq.${reportId}` },
+        () => fetchDetails()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'incidents' },
+        () => fetchDetails()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [reportId]);
 
   if (loading) {
     return (
-      <div className="py-16 text-center text-xs text-slate-400 font-medium space-y-2">
-        <div className="w-6 h-6 border-2 border-[#1769AA] border-t-transparent rounded-full animate-spin mx-auto" />
-        <span>Loading incident details...</span>
+      <div className="py-24 text-center text-xs text-[#648274] font-medium space-y-3">
+        <div className="w-8 h-8 border-2 border-[#237A52] border-t-transparent rounded-full animate-spin mx-auto" />
+        <span>Loading report details & tracking status...</span>
       </div>
     );
   }
 
   if (error || !report) {
     return (
-      <div className="max-w-5xl mx-auto space-y-4">
-        <Link to="/citizen/my-reports" className="text-xs font-bold text-[#1769AA] hover:underline flex items-center gap-1.5">
-          <ArrowLeft className="w-4 h-4" /> Back to My Submissions
+      <div className="p-8 bg-white rounded-[16px] border border-[#DDEBE2] shadow-xs text-center space-y-4 max-w-md mx-auto my-12">
+        <div className="text-[#237A52] font-bold text-base">Report Unavailable</div>
+        <p className="text-xs text-[#648274]">{error || 'Could not retrieve report details.'}</p>
+        <Link to="/citizen/my-reports" className="btn-civic-primary rounded-xl">
+          Back to My Reports
         </Link>
-        <div className="p-4 text-xs bg-red-50 text-red-700 border border-red-200 rounded-xl font-medium">
-          {error || 'Report not found.'}
-        </div>
       </div>
     );
   }
 
   const coords = parseCoordinates(report.location);
-  const incident = incidentData?.incident;
+  const incident = incidentData?.incident || null;
+  const linkedReports = incidentData?.reports || [];
+  const reportCount = incident?.report_count || linkedReports.length || 1;
 
-  const handleShare = () => {
-    if (navigator.share) {
-      navigator.share({
-        title: report.ai_category || 'Civic Issue Report',
-        text: `Check status for Report ${report.id}`,
-        url: window.location.href
-      }).catch(() => {});
-    } else {
-      navigator.clipboard.writeText(window.location.href);
-      alert('Report link copied to clipboard!');
-    }
+  // Determine current status step index
+  const currentStatus = report.status || 'OPEN';
+  const getStepIndex = (status) => {
+    if (status === 'RESOLVED' || status === 'CLOSED') return 3;
+    if (status === 'IN_PROGRESS' || status === 'ESCALATED') return 2;
+    if (status === 'REVIEWED') return 1;
+    return 0;
   };
+  const activeStepIdx = getStepIndex(currentStatus);
+
+  const isVoiceNote = Boolean(report.voice_note_url);
+  const descriptionContent = report.voice_transcript || report.description || 'Civic issue recorded for municipal resolution.';
 
   return (
-    <div className="space-y-6 max-w-[1400px] mx-auto pb-12 select-none">
+    <div className="max-w-[1080px] mx-auto pb-16 px-3 sm:px-6 pt-3 select-none space-y-5">
       
-      {/* 1. Header Navigation & Quick Badges */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <Link
-            to="/citizen/my-reports"
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#1769AA] hover:underline mb-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Back to My Submissions</span>
-          </Link>
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-              Report Details
-            </h1>
-            <StatusBadge status={incident?.status || report.status || 'OPEN'} />
-            <PriorityBadge priority={incident?.priority_level || 'MEDIUM'} />
-          </div>
-          <p className="text-xs text-slate-500 font-medium mt-1">
-            Track the progress and details of your reported issue.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-slate-400 font-mono bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 font-bold">
-            Report ID: #{report.id}
-          </span>
-          <button
-            onClick={handleShare}
-            className="px-3.5 py-1.5 rounded-xl bg-[#1769AA] text-white hover:bg-[#0D4775] text-xs font-bold shadow-xs flex items-center gap-1.5 transition-all"
-          >
-            <Share2 className="w-3.5 h-3.5" />
-            <span>Share</span>
-          </button>
-        </div>
+      {/* Back Navigation Header */}
+      <div className="flex items-center justify-between">
+        <Link to="/citizen/my-reports" className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#237A52] hover:underline">
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back to My Reports</span>
+        </Link>
+        <div className="text-[11px] font-mono text-[#8AA095]">Report #{report.id.substring(0, 12)}</div>
       </div>
 
-      {/* 2. Main 2-Column Incident Detail Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {/* Two-Column Report Details & Tracking Layout */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
         
-        {/* LEFT COLUMN: Photo Evidence & Location Map (7 Cols) */}
-        <div className="lg:col-span-7 space-y-6">
+        {/* LEFT COLUMN: Visual Evidence & Location Map */}
+        <div className="space-y-4">
           
-          {/* Photo Evidence Card */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-                Photo Evidence
-              </h3>
-              <span className="text-[10px] text-slate-400 font-mono">Max display height 340px</span>
+          {/* Photo Gallery */}
+          <div className="bg-white p-4 rounded-[16px] border border-[#DDEBE2] shadow-xs space-y-3">
+            <div className="text-xs font-semibold text-[#237A52] uppercase tracking-wider">
+              Submitted Photo Evidence
+            </div>
+            <div className="relative rounded-xl overflow-hidden border border-[#DDEBE2] bg-[#FBFDFC] aspect-video">
+              <img src={report.image_url} alt="Evidence" className="w-full h-full object-cover" />
+            </div>
+          </div>
+
+          {/* Location Map Preview */}
+          <div className="bg-white p-4 rounded-[16px] border border-[#DDEBE2] shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-[#237A52] uppercase tracking-wider flex items-center gap-1">
+                <MapPin className="w-3.5 h-3.5 text-[#237A52]" />
+                <span>Location</span>
+              </span>
+              <span className="text-[11px] font-semibold text-[#237A52]">Confirmed GPS</span>
             </div>
 
-            <div className="bg-slate-50 p-2 rounded-2xl border border-slate-200/80 overflow-hidden">
-              <img
-                src={report.image_url}
-                alt="Photo Evidence"
-                className="w-full h-[320px] object-cover rounded-xl shadow-2xs"
+            <div className="h-52 rounded-xl overflow-hidden border border-[#DDEBE2]">
+              <InteractiveMap
+                center={coords ? [coords.lat, coords.lng] : [14.467389, 75.924080]}
+                zoom={15}
+                height="100%"
+                markers={coords ? [{ id: report.id, latitude: coords.lat, longitude: coords.lng, title: report.ai_category || 'Location' }] : []}
               />
             </div>
 
-            {/* Thumbnail Row */}
-            <div className="flex items-center gap-2 pt-1">
-              <div className="w-16 h-16 rounded-xl overflow-hidden border-2 border-[#1769AA] shadow-2xs cursor-pointer">
-                <img src={report.image_url} alt="Thumb 1" className="w-full h-full object-cover" />
+            <div className="p-3 rounded-xl bg-[#FBFDFC] border border-[#DDEBE2] text-xs space-y-1">
+              <div className="font-bold text-[#163A2C]">{report.location_name || 'Davangere Zone'}</div>
+              <div className="text-[10px] text-[#8AA095] font-mono">
+                Coordinates: {coords ? formatCoordinates(coords.lat, coords.lng) : '14.4674° N, 75.9241° E'}
               </div>
             </div>
           </div>
-
-          {/* Location Map Card */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                <MapPin className="w-4 h-4 text-[#1769AA]" /> Location Map
-              </h3>
-              <span className="text-xs font-mono text-slate-500 font-semibold">
-                {formatCoordinates(coords.lat, coords.lng)}
-              </span>
-            </div>
-
-            <InteractiveMap
-              height="260px"
-              interactive={false}
-              center={coords}
-              selectedLocation={coords}
-            />
-
-            <div className="grid grid-cols-2 gap-3 pt-1 text-xs">
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-extrabold uppercase text-slate-400 block">Latitude</span>
-                <span className="font-mono font-bold text-slate-800">{coords.lat}</span>
-              </div>
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-extrabold uppercase text-slate-400 block">Longitude</span>
-                <span className="font-mono font-bold text-slate-800">{coords.lng}</span>
-              </div>
-              <div className="col-span-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-extrabold uppercase text-slate-400 block">Address</span>
-                <span className="font-semibold text-slate-800">
-                  {report.location_name || 'Bapuji Nagar, Davangere, Karnataka'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Voice Note Audio Card if available */}
-          {report.voice_note_url && (
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-2">
-              <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                <Volume2 className="w-4 h-4 text-[#1769AA]" /> Voice Note Context
-              </h3>
-              <audio controls src={report.voice_note_url} className="w-full h-9 rounded-xl" />
-            </div>
-          )}
 
         </div>
 
-        {/* RIGHT COLUMN: AI Classification & Timeline (5 Cols) */}
-        <div className="lg:col-span-5 space-y-6">
+        {/* RIGHT COLUMN: Report Information & Tracking Timeline */}
+        <div className="space-y-4">
           
-          {/* AI Classification Component Card */}
-          <div className="bg-gradient-to-br from-blue-50/70 via-white to-slate-50 p-6 rounded-2xl border border-blue-200 shadow-2xs space-y-4 relative overflow-hidden">
-            <div className="flex items-center justify-between">
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-100 text-[#1769AA] text-[10px] font-extrabold tracking-wider uppercase">
-                <Sparkles className="w-3.5 h-3.5" /> AI CLASSIFICATION
+          {/* Main Info Card */}
+          <div className="bg-white p-5 rounded-[16px] border border-[#DDEBE2] shadow-xs space-y-4">
+            
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <StatusBadge status={currentStatus} />
+                  <span className="text-[10px] font-mono text-[#8AA095]">RPT-2025-{report.id.substring(0, 6)}</span>
+                </div>
+                <h1 className="text-xl font-bold text-[#163A2C] tracking-tight">
+                  {report.ai_category || report.category || 'Pothole on Main Street'}
+                </h1>
               </div>
-              <span className="text-xs font-mono font-extrabold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200">
-                {report.ai_confidence || 94}% AI Confidence
+              <span className="text-[11px] text-[#8AA095] font-medium shrink-0">
+                {new Date(report.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </span>
             </div>
 
-            <div>
-              <h3 className="text-lg font-extrabold text-slate-900 leading-snug">
-                {report.ai_category || report.category || 'Pothole on Main Road'}
-              </h3>
-              <p className="text-xs text-slate-500 font-medium mt-1">
-                Automated Gemini vision AI detected issue and dispatched workorder.
+            {/* Description Section */}
+            <div className="space-y-1 pt-1 border-t border-[#DDEBE2]">
+              <div className="text-[10px] font-bold text-[#8AA095] uppercase">Description</div>
+              <p className="text-xs text-[#163A2C] font-normal leading-relaxed bg-[#FBFDFC] p-3 rounded-xl border border-[#DDEBE2]">
+                "{descriptionContent}"
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 pt-2 text-xs">
-              <div className="bg-white p-3 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-extrabold text-slate-400 uppercase block">Status</span>
-                <StatusBadge status={incident?.status || report.status || 'IN_PROGRESS'} />
+            {/* Voice Note Audio Track */}
+            {isVoiceNote && (
+              <div className="p-3 rounded-xl bg-[#EAF7EF] border border-[#D5EBDD] flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-xs font-bold text-[#237A52]">
+                  <Volume2 className="w-4 h-4 text-[#237A52]" />
+                  <span>Voice Note (00:12)</span>
+                </div>
+                <audio controls src={report.voice_note_url} className="h-8 max-w-[180px]" />
               </div>
-              <div className="bg-white p-3 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-extrabold text-slate-400 uppercase block">Priority</span>
-                <PriorityBadge priority={incident?.priority_level || 'MEDIUM'} />
+            )}
+
+            {/* Community Issue Indicator */}
+            {reportCount > 1 && (
+              <div className="p-3 rounded-xl bg-[#EAF7EF] border border-[#D5EBDD] flex items-center gap-2.5 text-xs text-[#237A52] font-semibold">
+                <Users className="w-4 h-4 text-[#237A52] shrink-0" />
+                <span>{reportCount} citizens have reported this physical issue nearby</span>
               </div>
-              <div className="bg-white p-3 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-extrabold text-slate-400 uppercase block">Department</span>
-                <span className="font-bold text-slate-800">Public Works Dept</span>
-              </div>
-              <div className="bg-white p-3 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-extrabold text-slate-400 uppercase block">SLA Deadline</span>
-                <SlaTimer deadline={incident?.sla_deadline || report.sla_deadline} />
-              </div>
-            </div>
+            )}
+
           </div>
 
-          {/* Activity Timeline */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
-            <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-3">
-              Activity Timeline
-            </h3>
-
-            <div className="space-y-4 relative before:absolute before:left-3.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
-              
-              {/* Step 1 */}
-              <div className="flex items-start gap-3 relative z-10">
-                <div className="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs">
-                  <Check className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-900">Report Submitted</div>
-                  <div className="text-[11px] text-slate-500">{new Date(report.created_at).toLocaleString()}</div>
-                </div>
-              </div>
-
-              {/* Step 2 */}
-              <div className="flex items-start gap-3 relative z-10">
-                <div className="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs">
-                  <Check className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-900">AI Analysis & Detection</div>
-                  <div className="text-[11px] text-slate-500">Gemini Vision AI classified issue</div>
-                </div>
-              </div>
-
-              {/* Step 3 */}
-              <div className="flex items-start gap-3 relative z-10">
-                <div className="w-7 h-7 rounded-full bg-amber-500 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs">
-                  <Clock className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-900">Officer Assigned</div>
-                  <div className="text-[11px] text-amber-700 font-semibold">Public Works Officer (In Progress)</div>
-                </div>
-              </div>
-
-              {/* Step 4 */}
-              <div className="flex items-start gap-3 relative z-10">
-                <div className="w-7 h-7 rounded-full bg-slate-200 text-slate-400 flex items-center justify-center font-bold text-xs shrink-0">
-                  4
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-400">Work Started</div>
-                  <div className="text-[11px] text-slate-400">Pending field inspection</div>
-                </div>
-              </div>
-
-              {/* Step 5 */}
-              <div className="flex items-start gap-3 relative z-10">
-                <div className="w-7 h-7 rounded-full bg-slate-200 text-slate-400 flex items-center justify-center font-bold text-xs shrink-0">
-                  5
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-400">Resolution</div>
-                  <div className="text-[11px] text-slate-400">Pending final verification</div>
-                </div>
-              </div>
-
+          {/* Visual Tracking Stepper Card */}
+          <div className="bg-white p-5 rounded-[16px] border border-[#DDEBE2] shadow-xs space-y-4">
+            <div className="text-xs font-semibold text-[#237A52] uppercase tracking-wider">
+              Track Report Progress
             </div>
+
+            {/* Stepper Timeline Bar */}
+            <div className="grid grid-cols-4 gap-1 relative pt-1">
+              {TRACKING_STEPS.map((step, idx) => {
+                const isDone = idx <= activeStepIdx;
+                const isCurrent = idx === activeStepIdx;
+
+                return (
+                  <div key={step.key} className="text-center space-y-1 z-10">
+                    <div className={`w-7 h-7 rounded-full mx-auto flex items-center justify-center text-xs font-bold transition-all ${
+                      isDone
+                        ? 'bg-[#237A52] text-white'
+                        : 'bg-[#F1FAF4] text-[#8AA095] border border-[#DDEBE2]'
+                    }`}>
+                      {isDone ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : idx + 1}
+                    </div>
+                    <div className={`text-[10px] ${isCurrent ? 'font-bold text-[#237A52]' : isDone ? 'font-semibold text-[#163A2C]' : 'text-[#8AA095]'}`}>
+                      {step.label}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Status Narrative Box */}
+            <div className="p-3.5 rounded-xl bg-[#FBFDFC] border border-[#DDEBE2] space-y-1">
+              <div className="text-xs font-bold text-[#237A52] capitalize">
+                Status: {currentStatus.replace('_', ' ')}
+              </div>
+              <p className="text-xs text-[#648274]">
+                {currentStatus === 'RESOLVED'
+                  ? 'Your issue has been resolved by municipal authorities.'
+                  : currentStatus === 'IN_PROGRESS'
+                  ? 'Your issue is currently being addressed by our team.'
+                  : 'Your report has been registered and sent to the department.'}
+              </p>
+            </div>
+
+            {/* Assigned Officer Information Card */}
+            <div className="p-3 rounded-xl bg-white border border-[#DDEBE2] flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-[#237A52] text-white flex items-center justify-center font-bold text-xs">
+                  RO
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-[#163A2C]">Rahul Kumar</div>
+                  <div className="text-[10px] text-[#648274]">Assigned Ward Officer</div>
+                </div>
+              </div>
+
+              <button
+                onClick={() => alert('Contacting Ward Officer Helpline: 1800-425-9999')}
+                className="w-8 h-8 rounded-full bg-[#EAF7EF] text-[#237A52] flex items-center justify-center border border-[#D5EBDD] hover:bg-[#237A52] hover:text-white transition-colors cursor-pointer"
+                title="Call Officer"
+              >
+                <Phone className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Notification Toggle Button */}
+            <button
+              onClick={() => setIsNotified(!isNotified)}
+              className={`w-full py-3 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                isNotified
+                  ? 'bg-[#EAF7EF] text-[#237A52] border border-[#D5EBDD]'
+                  : 'btn-civic-primary'
+              }`}
+            >
+              <Bell className="w-4 h-4" />
+              <span>{isNotified ? 'Subscribed to Status Updates' : 'Get Notified on Update'}</span>
+            </button>
+
           </div>
 
         </div>

@@ -1,0 +1,51 @@
+<svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Outer Organic Botanical Enclosure -->
+  <path d="M50 8C72 8 88 24 88 48C88 70 70 88 50 88C28 88 12 70 12 48C12 24 28 8 50 8Z" stroke="#236A48" stroke-width="3" stroke-linecap="round" stroke-dasharray="80 10 40 10" fill="#F4F8F4" />
+  
+  <!-- Secondary City Buildings (Background Silhouettes) -->
+  <rect x="28" y="42" width="12" height="28" rx="2" fill="#A8C9B1" />
+  <rect x="31" y="46" width="2" height="4" fill="#FFFFFF" opacity="0.8" />
+  <rect x="35" y="46" width="2" height="4" fill="#FFFFFF" opacity="0.8" />
+  <rect x="31" y="54" width="2" height="4" fill="#FFFFFF" opacity="0.8" />
+  <rect x="35" y="54" width="2" height="4" fill="#FFFFFF" opacity="0.8" />
+
+  <rect x="60" y="38" width="13" height="32" rx="2" fill="#3C8A68" />
+  <rect x="63" y="43" width="2.5" height="5" fill="#DDEBE0" />
+  <rect x="67.5" y="43" width="2.5" height="5" fill="#DDEBE0" />
+  <rect x="63" y="52" width="2.5" height="5" fill="#DDEBE0" />
+  <rect x="67.5" y="52" width="2.5" height="5" fill="#DDEBE0" />
+
+  <!-- Central Tall Civic Building / Tower -->
+  <rect x="41" y="24" width="18" height="48" rx="2.5" fill="#174D38" />
+  <!-- Spire / Dome Accent -->
+  <path d="M47 17L50 11L53 17H47Z" fill="#236A48" />
+  <rect x="48.5" y="17" width="3" height="7" fill="#174D38" />
+  
+  <!-- Tower Windows -->
+  <rect x="45" y="29" width="3.5" height="6" rx="1" fill="#FFFFFF" opacity="0.9" />
+  <rect x="51.5" y="29" width="3.5" height="6" rx="1" fill="#FFFFFF" opacity="0.9" />
+  <rect x="45" y="39" width="3.5" height="6" rx="1" fill="#FFFFFF" opacity="0.9" />
+  <rect x="51.5" y="39" width="3.5" height="6" rx="1" fill="#FFFFFF" opacity="0.9" />
+  <rect x="45" y="49" width="3.5" height="6" rx="1" fill="#FFFFFF" opacity="0.9" />
+  <rect x="51.5" y="49" width="3.5" height="6" rx="1" fill="#FFFFFF" opacity="0.9" />
+
+  <!-- Base Botanical Cradling Leaves (Rising Upward) -->
+  <!-- Left Outer Leaf -->
+  <path d="M16 68C22 55 36 54 44 65C34 76 22 75 16 68Z" fill="#3C8A68" />
+  <path d="M19 69C25 60 34 58 40 66" stroke="#A8C9B1" stroke-width="1.2" stroke-linecap="round" fill="none" />
+
+  <!-- Left Inner Leaf -->
+  <path d="M25 76C32 60 48 58 50 72C38 84 28 82 25 76Z" fill="#236A48" />
+  <path d="M28 76C34 65 44 63 47 73" stroke="#DDEBE0" stroke-width="1.2" stroke-linecap="round" fill="none" />
+
+  <!-- Right Outer Leaf -->
+  <path d="M84 68C78 55 64 54 56 65C66 76 78 75 84 68Z" fill="#3C8A68" />
+  <path d="M81 69C75 60 66 58 60 66" stroke="#A8C9B1" stroke-width="1.2" stroke-linecap="round" fill="none" />
+
+  <!-- Right Inner Leaf -->
+  <path d="M75 76C68 60 52 58 50 72C62 84 72 82 75 76Z" fill="#236A48" />
+  <path d="M72 76C66 65 56 63 53 73" stroke="#DDEBE0" stroke-width="1.2" stroke-linecap="round" fill="none" />
+
+  <!-- Central Base Stem/Shield Accent -->
+  <path d="M50 68L54 77H46L50 68Z" fill="#A8C9B1" />
+</svg>

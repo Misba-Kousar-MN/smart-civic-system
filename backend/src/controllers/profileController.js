@@ -80,7 +80,57 @@ async function updateMyProfile(req, res, next) {
   }
 }
 
+/**
+ * POST /profile/provision-officer
+ * Provisions an officer account role and officer table record via service role
+ */
+async function provisionOfficer(req, res, next) {
+  try {
+    const { role, department_id, zone_id } = req.body;
+    const targetRole = ['ward_officer', 'aee', 'commissioner', 'admin'].includes(role) ? role : 'ward_officer';
+    const levelMap = { ward_officer: 1, aee: 2, commissioner: 3 };
+
+    // Update profile role via service role
+    const { data: updatedProfile, error: pErr } = await supabaseService
+      .from('profiles')
+      .update({ role: targetRole })
+      .eq('id', req.user.id)
+      .select('id, full_name, role')
+      .single();
+
+    if (pErr) {
+      throw ApiError.internal('DB_UNEXPECTED', `Failed to update officer profile role: ${pErr.message}`);
+    }
+
+    // Insert or update officers table
+    const { data: existingOfficer } = await supabaseService
+      .from('officers')
+      .select('id')
+      .eq('profile_id', req.user.id)
+      .maybeSingle();
+
+    if (!existingOfficer) {
+      await supabaseService
+        .from('officers')
+        .insert({
+          profile_id: req.user.id,
+          level: levelMap[targetRole] || 1,
+          department_id: department_id || null,
+          zone_id: zone_id || null
+        });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: updatedProfile
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   getMyProfile,
-  updateMyProfile
+  updateMyProfile,
+  provisionOfficer
 };

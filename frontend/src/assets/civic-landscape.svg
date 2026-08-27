@@ -1,0 +1,135 @@
+<svg width="1200" height="320" viewBox="0 0 1200 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Sky Tint -->
+  <rect width="1200" height="320" fill="#F4F8F4" />
+
+  <!-- Layer 1: Distant City Skyline (8-12 Buildings) -->
+  <g fill="#DDEBE0" opacity="0.95">
+    <rect x="90" y="110" width="45" height="150" rx="3" />
+    <rect x="125" y="80" width="38" height="180" rx="3" />
+    <rect x="175" y="130" width="50" height="130" rx="3" />
+    
+    <rect x="360" y="95" width="55" height="165" rx="3" />
+    <rect x="425" y="65" width="45" height="195" rx="3" />
+    <path d="M447.5 40L452.5 65H442.5L447.5 40Z" fill="#A8C9B1" />
+    <rect x="480" y="115" width="52" height="145" rx="3" />
+    <rect x="542" y="90" width="40" height="170" rx="3" />
+
+    <rect x="760" y="105" width="48" height="155" rx="3" />
+    <rect x="818" y="75" width="42" height="185" rx="3" />
+    <rect x="870" y="120" width="55" height="140" rx="3" rx="3" />
+    <rect x="935" y="95" width="40" height="165" rx="3" />
+  </g>
+
+  <!-- Secondary Skyline Accents -->
+  <g fill="#E8F2EA">
+    <rect x="135" y="90" width="6" height="10" fill="#A8C9B1" />
+    <rect x="145" y="90" width="6" height="10" fill="#A8C9B1" />
+    <rect x="435" y="75" width="8" height="12" fill="#A8C9B1" />
+    <rect x="450" y="75" width="8" height="12" fill="#A8C9B1" />
+    <rect x="830" y="85" width="7" height="11" fill="#A8C9B1" />
+  </g>
+
+  <!-- Layer 2: Rolling Green Hills (Back & Middle) -->
+  <path
+    d="M-50 220 Q 200 130 500 180 T 1050 150 Q 1150 140 1250 170 V 320 H -50 Z"
+    fill="#DDEBE0"
+  />
+  <path
+    d="M-50 240 Q 300 160 700 210 T 1250 190 V 320 H -50 Z"
+    fill="#E8F2EA"
+  />
+
+  <!-- Layer 3: Curved Civic Pathway / Road -->
+  <path
+    d="M-50 320 C 300 260 550 290 750 260 C 950 230 1100 270 1250 250 L 1250 320 Z"
+    fill="#FFFFFF"
+  />
+  <path
+    d="M-50 320 C 300 260 550 290 750 260 C 950 230 1100 270 1250 250"
+    stroke="#A8C9B1"
+    stroke-width="3"
+    stroke-dasharray="12 8"
+    opacity="0.7"
+  />
+
+  <!-- Layer 4: Civic Streetlights -->
+  <g stroke="#3C8A68" stroke-width="2.5" fill="none">
+    <!-- Light 1 -->
+    <path d="M220 290 V 230 C 220 218 238 218 238 224" />
+    <circle cx="238" cy="225" r="3.5" fill="#236A48" stroke="none" />
+    
+    <!-- Light 2 -->
+    <path d="M620 275 V 215 C 620 203 638 203 638 209" />
+    <circle cx="638" cy="210" r="3.5" fill="#236A48" stroke="none" />
+
+    <!-- Light 3 -->
+    <path d="M980 265 V 205 C 980 193 998 193 998 199" />
+    <circle cx="998" cy="200" r="3.5" fill="#236A48" stroke="none" />
+  </g>
+
+  <!-- Layer 5: Large Prominent Asymmetrical Trees (Left & Right) -->
+
+  <!-- LEFT LANDSCAPE: Large Prominent Tree (220px tall) + 2-3 Smaller Trees & Bushes -->
+  <g id="left-trees">
+    <!-- Main Large Tree Trunk -->
+    <rect x="95" y="170" width="12" height="110" rx="4" fill="#236A48" />
+    
+    <!-- Overlapping Rounded Organic Canopy Shapes -->
+    <circle cx="101" cy="150" r="48" fill="#3C8A68" />
+    <circle cx="85" cy="135" r="36" fill="#A8C9B1" />
+    <circle cx="118" cy="135" r="34" fill="#236A48" />
+    <circle cx="101" cy="115" r="30" fill="#DDEBE0" opacity="0.9" />
+
+    <!-- Left Secondary Tree 1 -->
+    <rect x="42" y="210" width="8" height="70" rx="3" fill="#236A48" />
+    <circle cx="46" cy="195" r="30" fill="#3C8A68" />
+    <circle cx="38" cy="185" r="22" fill="#A8C9B1" />
+
+    <!-- Left Secondary Tree 2 -->
+    <rect x="165" y="220" width="8" height="60" rx="3" fill="#236A48" />
+    <circle cx="169" cy="205" r="26" fill="#A8C9B1" />
+    <circle cx="174" cy="195" r="20" fill="#3C8A68" />
+  </g>
+
+  <!-- RIGHT LANDSCAPE: Asymmetrical Large Tree + Medium Trees + Bush Clusters -->
+  <g id="right-trees">
+    <!-- Main Right Large Tree Trunk -->
+    <rect x="1060" y="165" width="13" height="115" rx="4" fill="#236A48" />
+    
+    <!-- Canopy -->
+    <circle cx="1066.5" cy="142" r="52" fill="#236A48" />
+    <circle cx="1048" cy="125" r="38" fill="#3C8A68" />
+    <circle cx="1085" cy="125" r="36" fill="#A8C9B1" />
+    <circle cx="1066.5" cy="102" r="32" fill="#DDEBE0" opacity="0.9" />
+
+    <!-- Right Medium Tree 1 -->
+    <rect x="995" y="200" width="9" height="75" rx="3" fill="#236A48" />
+    <circle cx="999.5" cy="182" r="32" fill="#3C8A68" />
+    <circle cx="992" cy="172" r="24" fill="#A8C9B1" />
+
+    <!-- Right Medium Tree 2 -->
+    <rect x="1135" y="215" width="8" height="65" rx="3" fill="#236A48" />
+    <circle cx="1139" cy="200" r="28" fill="#A8C9B1" />
+    <circle cx="1144" cy="190" r="20" fill="#3C8A68" />
+  </g>
+
+  <!-- Foreground Bushes & Small Leaf Clusters -->
+  <path d="M15 285 C 15 265 40 265 52 278 C 62 268 85 268 90 285 Z" fill="#3C8A68" />
+  <path d="M450 282 C 450 270 470 270 478 277 C 485 271 502 271 506 282 Z" fill="#3C8A68" opacity="0.8" />
+  <path d="M780 278 C 780 264 800 264 808 274 C 815 266 835 266 840 278 Z" fill="#236A48" opacity="0.85" />
+  <path d="M1170 285 C 1170 268 1190 268 1198 280 Z" fill="#3C8A68" />
+
+  <!-- Layer 6: Decorative Botanical Corner Framing Leaves -->
+  <!-- Bottom Left Leaf Corner Cluster -->
+  <g transform="translate(0, 240)">
+    <path d="M0 80 Q 40 40 70 65 Q 40 90 0 80Z" fill="#3C8A68" />
+    <path d="M0 80 Q 60 10 90 45 Q 50 80 0 80Z" fill="#A8C9B1" />
+    <path d="M0 80 Q 20 -10 50 20 Q 30 50 0 80Z" fill="#3C8A68" />
+  </g>
+
+  <!-- Bottom Right Leaf Corner Cluster -->
+  <g transform="translate(1120, 240)">
+    <path d="M80 80 Q 40 40 10 65 Q 40 90 80 80Z" fill="#3C8A68" />
+    <path d="M80 80 Q 20 10 -10 45 Q 30 80 80 80Z" fill="#A8C9B1" />
+  </g>
+</svg>

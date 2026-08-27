@@ -5,5 +5,6 @@ export const masterDataApi = {
   getDepartments: () => client.get('/departments'),
   getSlaPolicies: () => client.get('/sla-policies'),
   getOfficers: () => client.get('/officers'),
-  getOfficerById: (officerId) => client.get(`/officers/${officerId}`)
+  getOfficerById: (officerId) => client.get(`/officers/${officerId}`),
+  getAdminMetrics: () => client.get('/admin-metrics')
 };

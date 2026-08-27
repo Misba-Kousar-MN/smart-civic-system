@@ -6,7 +6,9 @@ import ProtectedRoute from './components/ProtectedRoute';
 
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
+import BottomNav from './components/BottomNav';
 
+import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 
@@ -21,15 +23,17 @@ import IncidentDetailPage from './pages/IncidentDetailPage';
 import NotificationsPage from './pages/NotificationsPage';
 import ProfilePage from './pages/ProfilePage';
 import AdminDashboard from './pages/AdminDashboard';
+import AnalyticsHeatmapPage from './pages/AnalyticsHeatmapPage';
 
 const AppLayout = ({ children }) => {
   return (
-    <div className="app-layout flex min-h-screen bg-[#F7F9FC]">
+    <div className="app-layout flex min-h-screen bg-[#F7FBF8]">
       <Sidebar />
-      <div className="app-main-wrapper flex-1 flex flex-col min-w-0 md:pl-[240px]">
+      <div className="app-main-wrapper flex-1 flex flex-col min-w-0 md:pl-[230px]">
         <Navbar />
-        <main className="app-content flex-1 p-4 md:p-8 max-w-[1440px] w-full mx-auto">{children}</main>
+        <main className="app-content flex-1 p-3 sm:p-5 md:p-6 pb-20 md:pb-8 max-w-[1200px] w-full mx-auto">{children}</main>
       </div>
+      <BottomNav />
     </div>
   );
 };
@@ -39,14 +43,14 @@ const RootRedirect = () => {
 
   if (loading) {
     return (
-      <div className="flex-center" style={{ minHeight: '80vh' }}>
-        <div className="spinner"></div>
+      <div className="flex items-center justify-center min-h-screen bg-[#F5F7F5]">
+        <div className="w-8 h-8 border-2 border-[#184E38] border-t-transparent rounded-full animate-spin"></div>
       </div>
     );
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/welcome" replace />;
   }
 
   if (['ward_officer', 'aee', 'commissioner', 'admin'].includes(user.role)) {
@@ -62,7 +66,8 @@ function App() {
       <AuthProvider>
         <RealtimeProvider>
           <Routes>
-            {/* Public Auth Routes */}
+            {/* Public Splash & Auth Routes */}
+            <Route path="/welcome" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
 
@@ -165,6 +170,18 @@ function App() {
               }
             />
 
+            {/* Analytics & Geographic Heatmap Route */}
+            <Route
+              path="/analytics"
+              element={
+                <ProtectedRoute allowedRoles={['ward_officer', 'aee', 'commissioner', 'admin']}>
+                  <AppLayout>
+                    <AnalyticsHeatmapPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+
             {/* Admin Management Route */}
             <Route
               path="/admin/dashboard"
@@ -184,6 +201,6 @@ function App() {
       </AuthProvider>
     </BrowserRouter>
   );
-}
+};
 
 export default App;
