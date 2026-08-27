@@ -10,10 +10,16 @@ import config
 
 logger = logging.getLogger('gemini_provider')
 
+def resolve_effective_model(model_name: str = None) -> str:
+    m = model_name or getattr(config, 'ML_MODEL', None) or 'gemini-3.6-flash'
+    if any(deprecated in str(m) for deprecated in ['3.7', '3.5', '2.0', '1.5', '2.5']):
+        return 'gemini-3.6-flash'
+    return m
+
 class GeminiProvider(BaseMlProvider):
     def __init__(self):
         super().__init__('gemini')
-        self.model = getattr(config, 'ML_MODEL', None) or 'gemini-3.7-flash'
+        self.model = resolve_effective_model(getattr(config, 'ML_MODEL', None))
         self.max_retries = getattr(config, 'MAX_RETRIES', 3)
         self.session = requests.Session()
         self.session.trust_env = False
@@ -55,7 +61,7 @@ class GeminiProvider(BaseMlProvider):
                 "gemini_http_status": 0
             }
 
-        current_model = getattr(config, 'ML_MODEL', None) or self.model
+        current_model = resolve_effective_model(getattr(config, 'ML_MODEL', None) or self.model)
         max_retries = getattr(config, 'MAX_RETRIES', self.max_retries)
 
         for attempt in range(1, max_retries + 1):
@@ -266,30 +272,39 @@ Provide your response in raw JSON adhering to this exact schema:
     async def verify_resolution(self, before_bytes: bytes, after_bytes: bytes, incident_id: str, ai_category: str) -> Dict[str, Any]:
         if not config.GEMINI_API_KEY:
             return {
+                "success": False,
                 "ai_verification_passed": False,
-                "ai_confidence": 0.0,
-                "comparison_notes": "AI resolution verification service unavailable (API Key not configured). Incident remains active for manual officer review.",
+                "ai_confidence": None,
+                "comparison_notes": "AI Verification Unavailable: Gemini API key not configured. Incident remains active for manual officer review.",
+                "same_issue": False,
+                "repair_completed": False,
+                "service_error": True,
                 "model_version": f"{self.model}-fallback"
             }
 
         try:
             before_b64 = base64.b64encode(before_bytes).decode('utf-8')
             after_b64 = base64.b64encode(after_bytes).decode('utf-8')
-            current_model = getattr(config, 'ML_MODEL', None) or self.model
+            current_model = resolve_effective_model(getattr(config, 'ML_MODEL', None) or self.model)
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={config.GEMINI_API_KEY}"
 
-            prompt = f"""You are a municipal work order verification system.
-Compare the two provided images for an incident reported as "{ai_category or 'Civic Issue'}":
-Image 1: BEFORE resolution (initial reported condition)
-Image 2: AFTER resolution (completed repair work)
+            prompt = f"""You are an expert municipal infrastructure inspector.
+Compare the two provided images for a civic issue reported as "{ai_category or 'Civic Issue'}":
+Image 1: BEFORE resolution (initial reported condition from citizen)
+Image 2: AFTER resolution (completed repair/cleaning evidence submitted by officer)
 
-Determine if the physical civic issue shown in Image 1 has been repaired, cleaned, or resolved in Image 2.
+Perform a visual comparison to evaluate:
+1. "same_issue": Do Image 1 and Image 2 show the same location, infrastructure, or physical problem context? (true/false)
+2. "repair_completed": Has the physical defect, garbage, pothole, leak, or hazard in Image 1 been successfully repaired, cleaned, fixed, or cleared in Image 2? (true/false)
+3. "confidence": A numerical confidence percentage between 0.0 and 100.0 representing visual evidence certainty.
+4. "reason": A concise, clear 1-2 sentence explanation of your comparison finding.
 
 Provide your response in raw JSON adhering to this exact schema:
 {{
-  "ai_verification_passed": boolean,
-  "ai_confidence": number between 0.0 and 100.0,
-  "comparison_notes": "short description of repair observation"
+  "same_issue": boolean,
+  "repair_completed": boolean,
+  "confidence": number between 0.0 and 100.0,
+  "reason": "concise visual evaluation explanation"
 }}"""
 
             payload = {
@@ -308,6 +323,7 @@ Provide your response in raw JSON adhering to this exact schema:
                 }
             }
 
+            logger.info(f"[GEMINI] Calling Gemini Vision ({current_model}) for incident resolution verification...")
             resp = self.session.post(url, json=payload, timeout=15)
             if resp.status_code == 200:
                 res_data = resp.json()
@@ -316,23 +332,37 @@ Provide your response in raw JSON adhering to this exact schema:
                     raw_text = candidates[0]['content']['parts'][0].get('text', '')
                     parsed = json.loads(raw_text)
 
-                    passed = bool(parsed.get('ai_verification_passed'))
-                    conf = normalize_confidence(parsed.get('ai_confidence')) or 0.0
-                    notes = parsed.get('comparison_notes', 'Physical resolution evidence evaluated by Gemini.')
+                    same_issue = bool(parsed.get('same_issue', True))
+                    repair_completed = bool(parsed.get('repair_completed', parsed.get('ai_verification_passed', False)))
+                    conf = normalize_confidence(parsed.get('confidence', parsed.get('ai_confidence', 0.0))) or 0.0
+                    reason = parsed.get('reason', parsed.get('comparison_notes', 'Physical resolution evidence evaluated by Gemini.'))
+
+                    passed = repair_completed and same_issue and (conf >= 85.0)
+                    logger.info(f"[GEMINI] Verification result: passed={passed}, conf={conf}%, same_issue={same_issue}, repair_completed={repair_completed}")
 
                     return {
-                        "ai_verification_passed": passed and (conf >= 85.0),
+                        "success": True,
+                        "ai_verification_passed": passed,
                         "ai_confidence": conf,
-                        "comparison_notes": notes,
+                        "comparison_notes": reason,
+                        "same_issue": same_issue,
+                        "repair_completed": repair_completed,
+                        "service_error": False,
                         "model_version": current_model
                     }
+            else:
+                logger.error(f"[GEMINI] API HTTP Error {resp.status_code}: {resp.text}")
         except Exception as e:
             logger.error(f"[GEMINI] Resolution verification error: {str(e)}")
 
         return {
+            "success": False,
             "ai_verification_passed": False,
-            "ai_confidence": 0.0,
-            "comparison_notes": "AI resolution verification service unavailable or timed out. Incident remains active for manual officer review.",
+            "ai_confidence": None,
+            "comparison_notes": "AI Verification Unavailable: No verification result was received from the AI service. Incident remains active for manual officer review.",
+            "same_issue": False,
+            "repair_completed": False,
+            "service_error": True,
             "model_version": f"{self.model}-fallback"
         }
 

@@ -17,7 +17,8 @@ import {
   Sparkles,
   Inbox,
   UserCheck,
-  CheckCircle
+  CheckCircle,
+  Filter
 } from 'lucide-react';
 import { incidentApi } from '../api/incidentApi';
 import { masterDataApi } from '../api/masterDataApi';
@@ -43,7 +44,9 @@ const OfficerDashboard = () => {
 
   // Filters & View State
   const tabFromUrl = searchParams.get('tab') || 'ALL';
+  const categoryFromUrl = searchParams.get('category') || 'ALL';
   const [activeTab, setActiveTab] = useState(tabFromUrl);
+  const [selectedCategory, setSelectedCategory] = useState(categoryFromUrl);
   const [searchQuery, setSearchQuery] = useState('');
   const [showMap, setShowMap] = useState(false);
   const [departments, setDepartments] = useState([]);
@@ -123,6 +126,32 @@ const OfficerDashboard = () => {
     return incidents.filter(i => i.status !== 'RESOLVED' && i.status !== 'CLOSED').length;
   }, [incidents]);
 
+  // Derived Category Counts (100% Data-Driven)
+  const categoryCounts = useMemo(() => {
+    const counts = {
+      ALL: incidents.length,
+      POTHOLE: 0,
+      WATER_LEAKAGE: 0,
+      GARBAGE: 0,
+      OTHER: 0
+    };
+
+    incidents.forEach(inc => {
+      const cat = (inc.category || '').trim().toLowerCase();
+      if (cat === 'pothole') {
+        counts.POTHOLE++;
+      } else if (cat === 'water leakage' || cat === 'water_leakage') {
+        counts.WATER_LEAKAGE++;
+      } else if (cat.includes('garbage')) {
+        counts.GARBAGE++;
+      } else {
+        counts.OTHER++;
+      }
+    });
+
+    return counts;
+  }, [incidents]);
+
   // Smart Sorting Algorithm
   const sortedIncidents = useMemo(() => {
     const computeUrgencyRank = (inc) => {
@@ -161,6 +190,19 @@ const OfficerDashboard = () => {
   // Filtered Queue
   const filteredIncidents = useMemo(() => {
     return sortedIncidents.filter(inc => {
+      // 1. Category Filter
+      if (selectedCategory !== 'ALL') {
+        const cat = (inc.category || '').trim().toLowerCase();
+        if (selectedCategory === 'POTHOLE' && cat !== 'pothole') return false;
+        if (selectedCategory === 'WATER_LEAKAGE' && (cat !== 'water leakage' && cat !== 'water_leakage')) return false;
+        if (selectedCategory === 'GARBAGE' && !cat.includes('garbage')) return false;
+        if (selectedCategory === 'OTHER') {
+          const isKnown = cat === 'pothole' || cat === 'water leakage' || cat === 'water_leakage' || cat.includes('garbage');
+          if (isKnown) return false;
+        }
+      }
+
+      // 2. Status / Urgency Tab Filter
       if (activeTab === 'NEEDS_ASSIGNMENT') {
         if (inc.assigned_officer_id || inc.status === 'RESOLVED' || inc.status === 'CLOSED') return false;
       } else if (activeTab === 'SLA_RISK') {
@@ -176,6 +218,7 @@ const OfficerDashboard = () => {
         if (inc.status !== 'RESOLVED' && inc.status !== 'CLOSED') return false;
       }
 
+      // 3. Search Query Filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const cat = (inc.category || '').toLowerCase();
@@ -189,11 +232,30 @@ const OfficerDashboard = () => {
 
       return true;
     });
-  }, [sortedIncidents, activeTab, searchQuery]);
+  }, [sortedIncidents, activeTab, selectedCategory, searchQuery]);
 
   const handleTabChange = (tabKey) => {
     setActiveTab(tabKey);
-    setSearchParams({ tab: tabKey });
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set('tab', tabKey);
+    if (selectedCategory !== 'ALL') {
+      newParams.set('category', selectedCategory);
+    }
+    setSearchParams(newParams);
+  };
+
+  const handleCategoryChange = (catKey) => {
+    setSelectedCategory(catKey);
+    const newParams = new URLSearchParams(searchParams);
+    if (activeTab !== 'ALL') {
+      newParams.set('tab', activeTab);
+    }
+    if (catKey === 'ALL') {
+      newParams.delete('category');
+    } else {
+      newParams.set('category', catKey);
+    }
+    setSearchParams(newParams);
   };
 
   return (
@@ -424,6 +486,34 @@ const OfficerDashboard = () => {
           </div>
         </div>
 
+        {/* Category Tabs / Filters */}
+        <div className="px-5 py-3 bg-[#E6F4ED] border-b border-[#B8E0CB] flex items-center gap-2 overflow-x-auto">
+          <span className="text-[10px] font-black text-[#75998C] uppercase tracking-wider mr-1 shrink-0 flex items-center gap-1">
+            <Filter className="w-3 h-3 text-[#349670]" />
+            <span>Category:</span>
+          </span>
+          {[
+            { key: 'ALL', label: 'All', count: categoryCounts.ALL },
+            { key: 'POTHOLE', label: 'Pothole', count: categoryCounts.POTHOLE },
+            { key: 'WATER_LEAKAGE', label: 'Water Leakage', count: categoryCounts.WATER_LEAKAGE },
+            { key: 'GARBAGE', label: 'Garbage', count: categoryCounts.GARBAGE },
+            { key: 'OTHER', label: 'Other', count: categoryCounts.OTHER }
+          ].map(cat => (
+            <button
+              key={cat.key}
+              type="button"
+              onClick={() => handleCategoryChange(cat.key)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shrink-0 border cursor-pointer ${
+                selectedCategory === cat.key
+                  ? 'bg-[#1F5443] text-white border-[#1F5443] shadow-xs'
+                  : 'bg-[#DCF0E6] text-[#174437] border-[#B8E0CB] hover:bg-[#CEEADA]'
+              }`}
+            >
+              <span>{cat.label} ({cat.count})</span>
+            </button>
+          ))}
+        </div>
+
         {/* Error Notification */}
         {error && (
           <div className="m-4 p-4 rounded-xl bg-[#FAECEB] border border-[#F3C5BF] text-xs font-bold text-[#A6473D] flex items-center gap-2">
@@ -443,9 +533,13 @@ const OfficerDashboard = () => {
             <div className="w-12 h-12 rounded-2xl bg-[#D5EFE1] text-[#216D51] flex items-center justify-center mx-auto border border-[#B8E0CB]">
               <CheckCircle className="w-6 h-6" />
             </div>
-            <h3 className="text-sm font-bold text-[#1F5443]">No Incidents Found</h3>
+            <h3 className="text-sm font-bold text-[#1F5443]">
+              {selectedCategory !== 'ALL' ? `No ${selectedCategory.replace('_', ' ')} Incidents Found` : 'No Incidents Found'}
+            </h3>
             <p className="text-xs font-semibold text-[#4A7365] max-w-sm mx-auto">
-              {activeTab === 'ALL'
+              {selectedCategory !== 'ALL'
+                ? `No incidents in this category currently match the active filters.`
+                : activeTab === 'ALL'
                 ? 'All active workorders in your ward are clear.'
                 : `No active incidents currently match the '${activeTab.replace('_', ' ')}' filter.`}
             </p>

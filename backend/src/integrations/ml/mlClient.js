@@ -98,8 +98,11 @@ async function verifyResolution(beforeBuffer, afterBuffer, incidentId, aiCategor
       const mlData = response.data.data;
       return {
         ai_verification_passed: Boolean(mlData.ai_verification_passed),
-        ai_confidence: mlData.ai_confidence || 0.0,
+        ai_confidence: mlData.ai_confidence !== undefined && mlData.ai_confidence !== null ? mlData.ai_confidence : null,
         comparison_notes: mlData.comparison_notes || 'Resolution evidence processed by FastAPI ML service.',
+        same_issue: mlData.same_issue !== undefined ? Boolean(mlData.same_issue) : true,
+        repair_completed: mlData.repair_completed !== undefined ? Boolean(mlData.repair_completed) : false,
+        service_error: Boolean(mlData.service_error),
         model_version: mlData.model_version || 'fastapi-ml-v1'
       };
     }
@@ -110,8 +113,11 @@ async function verifyResolution(beforeBuffer, afterBuffer, incidentId, aiCategor
   // STRICT FAIL CLOSED ON ERROR / TIMEOUT / UNHEALTHY ML SERVICE
   return {
     ai_verification_passed: false,
-    ai_confidence: 0.0,
-    comparison_notes: 'AI resolution verification service unavailable or failed. Failed closed.',
+    ai_confidence: null,
+    comparison_notes: 'AI Verification Unavailable: No verification result was received from the AI service. Incident remains active for manual officer review.',
+    same_issue: false,
+    repair_completed: false,
+    service_error: true,
     model_version: 'fastapi-ml-failclosed'
   };
 }

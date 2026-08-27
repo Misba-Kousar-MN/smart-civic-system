@@ -50,7 +50,11 @@ const reportUpload = upload.fields([
 
 const resolutionUpload = upload.fields([
   { name: 'before_image', maxCount: 1 },
-  { name: 'after_image', maxCount: 1 }
+  { name: 'after_image', maxCount: 1 },
+  { name: 'evidence_image', maxCount: 1 },
+  { name: 'after_photo', maxCount: 1 },
+  { name: 'before_photo', maxCount: 1 },
+  { name: 'image', maxCount: 1 }
 ]);
 
 module.exports = {

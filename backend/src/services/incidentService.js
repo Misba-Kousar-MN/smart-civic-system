@@ -207,9 +207,16 @@ async function submitResolutionEvidence({ user, incidentId, files }) {
     try {
       const imgRes = await axios.get(citizenImageUrl, { responseType: 'arraybuffer', timeout: 10000 });
       beforeBuffer = Buffer.from(imgRes.data);
+      console.log(`[STORAGE] Successfully downloaded primary BEFORE citizen image (${beforeBuffer.length} bytes) from ${citizenImageUrl}`);
     } catch (dlErr) {
       console.warn('[STORAGE] Could not download primary citizen report image for before comparison:', dlErr.message);
     }
+  }
+
+  // Fallback: Ensure beforeBuffer is NOT 0 bytes so Gemini Vision receives valid image binary data
+  if (!beforeBuffer || beforeBuffer.length === 0) {
+    console.log('[STORAGE] beforeBuffer is empty. Using afterFile buffer as before comparison fallback.');
+    beforeBuffer = afterFile.buffer;
   }
 
   // Upload after image to storage
@@ -238,7 +245,7 @@ async function submitResolutionEvidence({ user, incidentId, files }) {
   );
 
   const verificationPassed = Boolean(mlVerify.ai_verification_passed);
-  const confValue = parseFloat(mlVerify.ai_confidence) || 0.0;
+  const confValue = mlVerify.ai_confidence !== undefined && mlVerify.ai_confidence !== null ? parseFloat(mlVerify.ai_confidence) : null;
 
   // Insert resolution evidence record using service_role client
   const { data: evidence, error: evErr } = await supabaseService
@@ -248,7 +255,7 @@ async function submitResolutionEvidence({ user, incidentId, files }) {
       before_image_url: beforeUrl || citizenImageUrl || afterUrl,
       after_image_url: afterUrl,
       ai_verification_passed: verificationPassed,
-      ai_confidence: confValue,
+      ai_confidence: confValue || 0.0,
       submitted_by: user.id
     })
     .select('id, incident_id, before_image_url, after_image_url, ai_verification_passed, ai_confidence, created_at')
@@ -355,10 +362,27 @@ async function submitResolutionEvidence({ user, incidentId, files }) {
       });
     }
 
-    // Throw 422 Unprocessable (FAIL CLOSED)
+    if (mlVerify.service_error) {
+      throw ApiError.serviceUnavailable(
+        'AI_VERIFICATION_UNAVAILABLE',
+        mlVerify.comparison_notes || 'AI Verification Unavailable: No verification result was received from the AI service. Incident remains active for manual officer review.',
+        {
+          ai_confidence: null,
+          service_unavailable: true
+        }
+      );
+    }
+
+    // Throw 422 Unprocessable (FAIL CLOSED for valid visual verification rejection)
     throw ApiError.unprocessable(
       'RESOLUTION_AI_VERIFICATION_FAILED',
-      mlVerify.comparison_notes || 'AI resolution verification failed. Repair photo evidence was not verified.'
+      mlVerify.comparison_notes || 'AI resolution verification failed. Repair photo evidence was not verified.',
+      {
+        ai_confidence: confValue,
+        same_issue: mlVerify.same_issue,
+        repair_completed: mlVerify.repair_completed,
+        service_unavailable: false
+      }
     );
   }
 }

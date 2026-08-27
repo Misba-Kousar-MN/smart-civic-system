@@ -124,9 +124,12 @@ async def verify_resolution(
             "success": True,
             "data": {
                 "incident_id": incident_id,
-                "ai_verification_passed": res.get("ai_verification_passed", True),
-                "ai_confidence": res.get("ai_confidence", 80.0),
+                "ai_verification_passed": res.get("ai_verification_passed", False),
+                "ai_confidence": res.get("ai_confidence"),
                 "comparison_notes": res.get("comparison_notes", "Verification processed"),
+                "same_issue": res.get("same_issue", True),
+                "repair_completed": res.get("repair_completed", False),
+                "service_error": res.get("service_error", False),
                 "model_version": res.get("model_version", config.ML_MODEL)
             },
             "processing_time_ms": proc_time

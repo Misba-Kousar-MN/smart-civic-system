@@ -79,50 +79,67 @@ const ResolutionModal = ({ isOpen = true, onClose, incident, onSuccess, onResolv
       setWorkflowState('VERIFYING');
       setError('');
 
+      console.log(`[RESOLUTION_UI] Submitting resolution for incidentId: ${incident.id}`);
+      console.log(`[RESOLUTION_UI] FormData attached: after_image (${file.name}, ${file.type}, ${file.size} bytes)`);
+
       const formData = new FormData();
-      formData.append('evidence_image', file);
       formData.append('after_image', file);
+      formData.append('evidence_image', file);
       if (remarks.trim()) {
         formData.append('remarks', remarks);
       }
 
       const res = await incidentApi.submitResolutionEvidence(incident.id, formData);
 
-      if (res?.success || res?.data?.ai_verified) {
-        const evData = res?.data?.resolution_evidence || res?.data;
-        const confidence = res?.data?.ai_confidence || evData?.ai_confidence || 92.5;
-        const notes = res?.data?.verification_notes || evData?.comparison_notes || 'Damage repaired successfully. Verification passed.';
+      const evidence = res?.data?.resolution_evidence;
+      const verified = Boolean(evidence?.ai_verification_passed);
+      const confidence = evidence?.ai_confidence !== undefined && evidence?.ai_confidence !== null
+        ? parseFloat(evidence.ai_confidence).toFixed(1)
+        : '92.5';
+      const notes = res?.message || 'Damage repaired successfully. Verification passed.';
 
+      if (res?.success || verified) {
         setVerificationResult({
           status: 'VERIFIED',
-          confidence: parseFloat(confidence).toFixed(1),
+          confidence: confidence,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           notes: notes
         });
         setWorkflowState('VERIFIED');
       } else {
-        const evData = res?.data?.resolution_evidence || res?.data;
-        const confidence = res?.data?.ai_confidence || evData?.ai_confidence || 64.0;
-        const notes = res?.message || evData?.comparison_notes || 'AI resolution verification failed. Repair photo did not match required confidence threshold.';
-
         setVerificationResult({
           status: 'FAILED',
-          confidence: parseFloat(confidence).toFixed(1),
+          confidence: confidence,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          notes: notes
+          notes: 'AI resolution verification failed. Repair photo did not match required 85% confidence threshold.'
         });
         setWorkflowState('FAILED');
       }
     } catch (err) {
       console.warn('[RESOLUTION VERIFICATION] API warning:', err);
-      // Fail closed check
-      const errMsg = err.message || 'AI verification failed or service unavailable.';
-      setVerificationResult({
-        status: 'FAILED',
-        confidence: '0.0',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        notes: errMsg
-      });
+      const isServiceUnavailable = err.code === 'AI_VERIFICATION_UNAVAILABLE' || err.status === 503 || err.data?.service_unavailable;
+      const isVerificationFailure = err.code === 'RESOLUTION_AI_VERIFICATION_FAILED' || err.status === 422;
+
+      let confidenceVal = null;
+      if (err.data?.ai_confidence !== undefined && err.data?.ai_confidence !== null) {
+        confidenceVal = parseFloat(err.data.ai_confidence).toFixed(1);
+      }
+
+      if (isServiceUnavailable) {
+        setVerificationResult({
+          status: 'UNAVAILABLE',
+          confidence: null,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          notes: err.message || 'AI Verification Unavailable: No verification result was received from the AI service. Incident remains active for manual officer review.'
+        });
+      } else {
+        setVerificationResult({
+          status: 'FAILED',
+          confidence: confidenceVal,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          notes: err.message || 'AI resolution verification failed. Repair photo evidence was not verified.'
+        });
+      }
       setWorkflowState('FAILED');
     }
   };
@@ -321,17 +338,19 @@ const ResolutionModal = ({ isOpen = true, onClose, incident, onSuccess, onResolv
           )}
 
           {workflowState === 'FAILED' && verificationResult && (
-            <div className="p-4 rounded-xl bg-[#FAECEB] border border-[#F3C5BF] space-y-2">
+            <div className={`p-4 rounded-xl space-y-2 border ${verificationResult.status === 'UNAVAILABLE' ? 'bg-[#FFF8E7] border-[#FCE3B4]' : 'bg-[#FAECEB] border-[#F3C5BF]'}`}>
               <div className="flex items-center justify-between">
-                <span className="text-xs font-black text-[#A6473D] flex items-center gap-1.5">
-                  <XCircle className="w-4 h-4 text-[#A6473D]" />
-                  <span>✕ Evidence Verification Failed</span>
+                <span className={`text-xs font-black flex items-center gap-1.5 ${verificationResult.status === 'UNAVAILABLE' ? 'text-[#B46D08]' : 'text-[#A6473D]'}`}>
+                  <XCircle className="w-4 h-4" />
+                  <span>{verificationResult.status === 'UNAVAILABLE' ? 'AI Verification Unavailable' : '✕ Evidence Verification Failed'}</span>
                 </span>
-                <span className="text-[10px] font-mono font-bold text-[#A6473D]">
-                  Confidence: {verificationResult.confidence}%
-                </span>
+                {verificationResult.confidence !== null && (
+                  <span className="text-[10px] font-mono font-bold text-[#A6473D]">
+                    Confidence: {verificationResult.confidence}%
+                  </span>
+                )}
               </div>
-              <p className="text-[11px] text-[#A6473D] font-semibold">
+              <p className={`text-[11px] font-semibold ${verificationResult.status === 'UNAVAILABLE' ? 'text-[#8A5100]' : 'text-[#A6473D]'}`}>
                 {verificationResult.notes}
               </p>
               <div className="flex items-center justify-end gap-2 pt-1">

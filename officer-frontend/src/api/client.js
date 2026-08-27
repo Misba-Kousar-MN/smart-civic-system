@@ -29,7 +29,8 @@ client.interceptors.response.use(
         status: status,
         code: data?.error?.code || 'UNKNOWN_ERROR',
         message: data?.error?.message || 'An unexpected error occurred.',
-        fields: data?.error?.fields || null
+        fields: data?.error?.fields || null,
+        data: data?.data || null
       });
     }
 
