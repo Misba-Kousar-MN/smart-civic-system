@@ -43,10 +43,22 @@ const OfficerDashboard = () => {
   const [lastSyncTime, setLastSyncTime] = useState(new Date());
 
   // Filters & View State
+  const userRole = user?.role || 'ward_officer';
+  const userMaxLevel = useMemo(() => {
+    if (userRole === 'aee') return 2;
+    if (['commissioner', 'admin'].includes(userRole)) return 3;
+    return 1;
+  }, [userRole]);
+
   const tabFromUrl = searchParams.get('tab') || 'ALL';
   const categoryFromUrl = searchParams.get('category') || 'ALL';
+  const levelFromUrl = parseInt(searchParams.get('level') || '1', 10);
+
   const [activeTab, setActiveTab] = useState(tabFromUrl);
   const [selectedCategory, setSelectedCategory] = useState(categoryFromUrl);
+  const [selectedAuthorityLevel, setSelectedAuthorityLevel] = useState(
+    Math.min(userMaxLevel, Math.max(1, isNaN(levelFromUrl) ? 1 : levelFromUrl))
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [showMap, setShowMap] = useState(false);
   const [departments, setDepartments] = useState([]);
@@ -152,6 +164,18 @@ const OfficerDashboard = () => {
     return counts;
   }, [incidents]);
 
+  // Derived Authority Level Counts (100% Data-Driven)
+  const levelCounts = useMemo(() => {
+    const counts = { 1: 0, 2: 0, 3: 0 };
+    incidents.forEach(inc => {
+      const lvl = inc.current_level || 1;
+      if (lvl >= 3) counts[3]++;
+      else if (lvl === 2) counts[2]++;
+      else counts[1]++;
+    });
+    return counts;
+  }, [incidents]);
+
   // Smart Sorting Algorithm
   const sortedIncidents = useMemo(() => {
     const computeUrgencyRank = (inc) => {
@@ -190,6 +214,12 @@ const OfficerDashboard = () => {
   // Filtered Queue
   const filteredIncidents = useMemo(() => {
     return sortedIncidents.filter(inc => {
+      // 0. Authority Level View Filter
+      const incLevel = inc.current_level || 1;
+      if (selectedAuthorityLevel === 1 && incLevel !== 1) return false;
+      if (selectedAuthorityLevel === 2 && incLevel !== 2) return false;
+      if (selectedAuthorityLevel === 3 && incLevel < 3) return false;
+
       // 1. Category Filter
       if (selectedCategory !== 'ALL') {
         const cat = (inc.category || '').trim().toLowerCase();
@@ -232,7 +262,21 @@ const OfficerDashboard = () => {
 
       return true;
     });
-  }, [sortedIncidents, activeTab, selectedCategory, searchQuery]);
+  }, [sortedIncidents, activeTab, selectedCategory, selectedAuthorityLevel, searchQuery]);
+
+  const handleLevelChange = (lvl) => {
+    if (lvl > userMaxLevel) {
+      setError(`Role '${userRole}' is restricted to Level ${userMaxLevel} operational queue.`);
+      return;
+    }
+    setError('');
+    setSelectedAuthorityLevel(lvl);
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set('level', lvl);
+    if (activeTab !== 'ALL') newParams.set('tab', activeTab);
+    if (selectedCategory !== 'ALL') newParams.set('category', selectedCategory);
+    setSearchParams(newParams);
+  };
 
   const handleTabChange = (tabKey) => {
     setActiveTab(tabKey);
@@ -436,14 +480,64 @@ const OfficerDashboard = () => {
       {/* 3. PRIORITIZED INCIDENT WORK QUEUE                               */}
       {/* ---------------------------------------------------------------- */}
       <div className="bg-[#E6F4ED] rounded-2xl border border-[#B8E0CB] shadow-xs overflow-hidden">
+        {/* Authority Level Switcher Strip */}
+        <div className="px-5 py-3.5 bg-[#D5EFE1] border-b border-[#B8E0CB] flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] font-black text-[#1F5443] uppercase tracking-wider flex items-center gap-1.5 shrink-0">
+              <Layers className="w-4 h-4 text-[#349670]" />
+              <span>Operational Authority View:</span>
+            </span>
+            <div className="flex items-center gap-1.5 p-1 bg-[#CEEADA] border border-[#B8E0CB] rounded-xl text-xs font-black overflow-x-auto">
+              {[
+                { lvl: 1, label: 'LEVEL 1 • WARD', subtitle: 'Ward Officer' },
+                { lvl: 2, label: 'LEVEL 2 • AEE', subtitle: 'Senior Tech' },
+                { lvl: 3, label: 'LEVEL 3 • COMMISSIONER', subtitle: 'Executive' }
+              ].map(item => {
+                const isLocked = item.lvl > userMaxLevel;
+                const isSelected = selectedAuthorityLevel === item.lvl;
+                return (
+                  <button
+                    key={item.lvl}
+                    type="button"
+                    onClick={() => handleLevelChange(item.lvl)}
+                    className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
+                      isSelected
+                        ? 'bg-[#1F5443] text-white shadow-xs font-extrabold'
+                        : isLocked
+                        ? 'opacity-40 text-[#4A7365] bg-transparent cursor-not-allowed'
+                        : 'text-[#174437] hover:bg-[#B8E0CB]/50 font-bold'
+                    }`}
+                    title={isLocked ? `Role '${userRole}' cannot access Level ${item.lvl}` : item.label}
+                  >
+                    <span>{item.label}</span>
+                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${isSelected ? 'bg-white/20 text-white' : 'bg-[#B8E0CB] text-[#1F5443]'}`}>
+                      {levelCounts[item.lvl] || 0}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="text-[11px] font-bold text-[#4A7365] flex items-center gap-1.5 shrink-0">
+            <ShieldAlert className="w-3.5 h-3.5 text-[#9C621E]" />
+            <span>Role: <strong className="text-[#1F5443] uppercase">{userRole.replace('_', ' ')}</strong></span>
+          </div>
+        </div>
+
         {/* Queue Header & Filters */}
         <div className="p-5 border-b border-[#B8E0CB] bg-[#DCF0E6] flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h2 className="text-base font-black text-[#1F5443] tracking-tight">
-              INCIDENT WORK QUEUE
+            <h2 className="text-base font-black text-[#1F5443] tracking-tight flex items-center gap-2">
+              <span>INCIDENT WORK QUEUE</span>
+              {selectedAuthorityLevel > 1 && (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-[#9C621E] text-white uppercase">
+                  Level {selectedAuthorityLevel} Oversight
+                </span>
+              )}
             </h2>
             <p className="text-xs font-semibold text-[#4A7365]">
-              Prioritized incidents requiring municipal action ({filteredIncidents.length} items visible).
+              Prioritized incidents requiring Level {selectedAuthorityLevel} municipal action ({filteredIncidents.length} items visible).
             </p>
           </div>
 

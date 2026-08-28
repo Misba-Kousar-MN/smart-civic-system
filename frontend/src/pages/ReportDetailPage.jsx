@@ -264,6 +264,73 @@ const ReportDetailPage = () => {
               </p>
             </div>
 
+            {/* Citizen SLA Accountability Box */}
+            {(() => {
+              const slaDeadline = incident?.sla_deadline || report?.sla_deadline;
+              const currentLevel = incident?.current_level || 1;
+              const isResolved = currentStatus === 'RESOLVED' || currentStatus === 'CLOSED';
+
+              let remainingHours = null;
+              let isSlaBreached = false;
+
+              if (slaDeadline && !isResolved) {
+                const diffMs = new Date(slaDeadline).getTime() - Date.now();
+                remainingHours = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60)));
+                isSlaBreached = diffMs <= 0;
+              }
+
+              let slaTitle = "⏱ Expected Resolution";
+              let slaSubtitle = remainingHours !== null ? `Target resolution within ${remainingHours} hours` : "Resolution on track";
+              let slaBadge = "🟢 On track";
+              let slaBg = "bg-[#F1FAF4] border-[#DDEBE2]";
+              let slaText = "Your report is registered and operating within normal municipal timeframes.";
+
+              if (isResolved) {
+                slaTitle = "✓ Issue Resolved";
+                slaSubtitle = "Completed by municipal authorities";
+                slaBadge = "RESOLVED";
+                slaBg = "bg-[#EAF7EF] border-[#D5EBDD]";
+                slaText = "This civic report has been verified and resolved.";
+              } else if (isSlaBreached && currentLevel >= 3) {
+                slaTitle = "🔴 Resolution Delayed";
+                slaSubtitle = "Overdue for senior municipal review";
+                slaBadge = "Priority Attention";
+                slaBg = "bg-[#FAECEB] border-[#F3C5BF]";
+                slaText = "Your report has exceeded the expected resolution timeframe and remains under senior municipal review.";
+              } else if (currentLevel >= 3) {
+                slaTitle = "⚠️ Higher-Level Review";
+                slaSubtitle = slaDeadline ? `Updated target: ${new Date(slaDeadline).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : "Senior review active";
+                slaBadge = "Escalated Review";
+                slaBg = "bg-[#FFF8E7] border-[#FCE3B4]";
+                slaText = "Your report has been escalated for senior executive review because the initial resolution timeframe was exceeded.";
+              } else if (currentLevel === 2 || isSlaBreached) {
+                slaTitle = "⚠️ Taking Longer Than Expected";
+                slaSubtitle = slaDeadline ? `Updated target: ${new Date(slaDeadline).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : "Higher-level review active";
+                slaBadge = "Escalated";
+                slaBg = "bg-[#FFF8E7] border-[#FCE3B4]";
+                slaText = "Your report exceeded its initial resolution timeframe and has been automatically escalated for higher-level technical review.";
+              }
+
+              return (
+                <div className={`p-4 rounded-xl border space-y-1.5 ${slaBg}`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[#163A2C]">
+                      {slaTitle}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-white/80 border border-[#DDEBE2] text-[#237A52]">
+                      {slaBadge}
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-bold text-[#237A52]">
+                    {slaSubtitle}
+                  </div>
+                  <p className="text-[11px] text-[#648274] font-medium leading-relaxed">
+                    {slaText}
+                  </p>
+                </div>
+              );
+            })()}
+
             {/* Assigned Officer Information Card */}
             <div className="p-3 rounded-xl bg-white border border-[#DDEBE2] flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">

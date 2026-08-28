@@ -12,7 +12,23 @@ async function getIncidents(req, res, next) {
     const limit = Math.min(200, parseInt(req.query.limit || '100', 10));
     const offset = (page - 1) * limit;
 
-    const { status, priority_level, department_id, zone_id, citizen_only } = req.query;
+    const { status, priority_level, department_id, zone_id, citizen_only, level } = req.query;
+
+    // Server-Side RBAC Level Access Validation
+    if (level) {
+      const requestedLevel = parseInt(level, 10);
+      let maxAllowedLevel = 1;
+      if (req.user.role === 'aee') maxAllowedLevel = 2;
+      if (['commissioner', 'admin'].includes(req.user.role)) maxAllowedLevel = 3;
+
+      if (requestedLevel > maxAllowedLevel && req.user.role !== 'admin') {
+        throw ApiError.forbidden(
+          'AUTH_INSUFFICIENT_ROLE',
+          `Role '${req.user.role}' is not authorized to access Level ${requestedLevel} operational queue.`
+        );
+      }
+      query = query.eq('current_level', requestedLevel);
+    }
 
     let query = supabaseService
       .from('incidents')

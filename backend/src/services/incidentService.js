@@ -397,7 +397,7 @@ async function checkAndEscalateSlaBreaches() {
     .select('id, current_level, status, sla_deadline, category')
     .in('status', ['OPEN', 'IN_PROGRESS', 'REOPENED', 'ESCALATED', 'SLA_BREACHED'])
     .lt('sla_deadline', nowIso)
-    .lt('current_level', 3);
+    .lte('current_level', 3);
 
   if (!overdueIncidents || overdueIncidents.length === 0) {
     return { escalated_count: 0 };
@@ -407,13 +407,44 @@ async function checkAndEscalateSlaBreaches() {
   for (const inc of overdueIncidents) {
     try {
       const fromLevel = inc.current_level || 1;
-      const toLevel = Math.min(3, fromLevel + 1);
+      
+      if (fromLevel >= 3) {
+        // Level 3 SLA Expiry -> FINAL SLA BREACH (No Level 4 created, remains Level 3)
+        const updateRes = await supabaseService
+          .from('incidents')
+          .update({
+            status: 'SLA_BREACHED',
+            current_level: 3,
+            updated_at: nowIso
+          })
+          .eq('id', inc.id);
 
-      // Compute Fresh SLA Deadline for Level 2 (24h) or Level 3 (12h)
+        console.log(`[DAEMON FINAL BREACH] Incident ${inc.id}: Level 3 Final SLA Breach, UpdateErr:`, updateRes.error);
+
+        await supabaseService.from('escalations').insert({
+          incident_id: inc.id,
+          from_level: 3,
+          to_level: 3,
+          reason: `FINAL SLA BREACH: Executive Level 3 SLA expired on ${new Date(inc.sla_deadline).toLocaleString()}. No higher authority level available.`,
+          status: 'FINAL_SLA_BREACH'
+        });
+
+        await supabaseService.from('status_history').insert({
+          incident_id: inc.id,
+          old_status: inc.status,
+          new_status: 'SLA_BREACHED',
+          remarks: 'FINAL SLA BREACH: Incident has exceeded Executive Level 3 resolution timeframe.'
+        });
+
+        count++;
+        continue;
+      }
+
+      // Normal Escalation: Level 1 -> Level 2 (24h) or Level 2 -> Level 3 (12h)
+      const toLevel = Math.min(3, fromLevel + 1);
       const freshHours = toLevel === 2 ? 24 : 12;
       const freshSlaDeadline = new Date(Date.now() + freshHours * 60 * 60 * 1000).toISOString();
 
-      // Update incident state to ESCALATED with new level and fresh SLA
       const updateRes = await supabaseService
         .from('incidents')
         .update({
@@ -423,10 +454,9 @@ async function checkAndEscalateSlaBreaches() {
           updated_at: nowIso
         })
         .eq('id', inc.id);
-      
+
       console.log(`[DAEMON ESCALATED] Incident ${inc.id}: Level ${fromLevel} -> Level ${toLevel}, UpdateErr:`, updateRes.error);
 
-      // Insert escalation record
       await supabaseService.from('escalations').insert({
         incident_id: inc.id,
         from_level: fromLevel,
@@ -435,7 +465,6 @@ async function checkAndEscalateSlaBreaches() {
         status: 'SLA_BREACHED'
       });
 
-      // Log status history
       await supabaseService.from('status_history').insert({
         incident_id: inc.id,
         old_status: inc.status,
@@ -443,7 +472,6 @@ async function checkAndEscalateSlaBreaches() {
         remarks: `SLA deadline breached. Automatically escalated to Level ${toLevel} with fresh ${freshHours}h SLA.`
       });
 
-      // Dispatch notifications to target officers
       const { data: targetOfficers } = await supabaseService
         .from('officers')
         .select('profile_id')
