@@ -43,6 +43,35 @@ const OfficerIncidentDetailPage = () => {
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
 
+  const [demoMode, setDemoMode] = useState(() => {
+    return localStorage.getItem('civic_demo_mode') === 'true';
+  });
+  const [breachLoading, setBreachLoading] = useState(false);
+  const [breachMessage, setBreachMessage] = useState('');
+
+  const toggleDemoMode = () => {
+    const nextVal = !demoMode;
+    setDemoMode(nextVal);
+    localStorage.setItem('civic_demo_mode', String(nextVal));
+  };
+
+  const handleSimulateSlaBreach = async () => {
+    if (breachLoading) return;
+    try {
+      setBreachLoading(true);
+      setBreachMessage('');
+      const res = await incidentApi.simulateSlaBreach(incidentId);
+      if (res?.success) {
+        setBreachMessage(res.data?.message || res.message || 'SLA breach simulated successfully!');
+        await fetchIncidentDetails();
+      }
+    } catch (err) {
+      alert(err.response?.data?.error?.message || err.message || 'Failed to simulate SLA breach.');
+    } finally {
+      setBreachLoading(false);
+    }
+  };
+
   const [showEscalateModal, setShowEscalateModal] = useState(false);
   const [showResolutionModal, setShowResolutionModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -102,7 +131,7 @@ const OfficerIncidentDetailPage = () => {
     );
   }
 
-  const { incident, reports = [], status_history = [], resolution_evidence = [] } = data;
+  const { incident, reports = [], status_history = [], resolution_evidence = [], escalations = [] } = data;
   const coords = parseCoordinates(incident.location);
   const latestResolution = resolution_evidence?.[0];
 
@@ -130,16 +159,74 @@ const OfficerIncidentDetailPage = () => {
           <p className="text-xs font-mono text-[#75998C]">INCIDENT ID: #{incident.id}</p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <button
+            onClick={toggleDemoMode}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black transition-all border shadow-xs ${
+              demoMode
+                ? 'bg-[#E09422] text-white border-[#F3DE9A] shadow-md ring-2 ring-white/40'
+                : 'bg-white/80 text-[#75998C] border-[#B8E0CB] hover:bg-white'
+            }`}
+            title="Toggle Demo Mode for presentation"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>DEMO: {demoMode ? 'ON' : 'OFF'}</span>
+          </button>
+
+          {demoMode && (
+            <button
+              onClick={handleSimulateSlaBreach}
+              disabled={breachLoading || isResolved || (incident.status === 'SLA_BREACHED' && incident.current_level >= 3)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all border shadow-md ${
+                incident.status === 'SLA_BREACHED' && incident.current_level >= 3
+                  ? 'bg-gray-200 text-gray-500 border-gray-300 cursor-not-allowed'
+                  : 'bg-[#A6473D] text-white hover:bg-[#8A3B32] border-[#C25B50] active:scale-98'
+              }`}
+            >
+              <Clock className={`w-3.5 h-3.5 ${breachLoading ? 'animate-spin' : ''}`} />
+              <span>
+                {breachLoading
+                  ? 'Simulating Breach...'
+                  : incident.status === 'SLA_BREACHED' && incident.current_level >= 3
+                  ? 'Final Breach Reached (No L4)'
+                  : (incident.current_level || 1) === 1
+                  ? '⚡ Simulate SLA Breach (L1 → L2)'
+                  : (incident.current_level || 1) === 2
+                  ? '⚡ Simulate SLA Breach (L2 → L3)'
+                  : '⚡ Simulate Final SLA Breach'}
+              </span>
+            </button>
+          )}
+
           <button
             onClick={() => setShowEscalateModal(true)}
-            disabled={isResolved}
+            disabled={isResolved || incident.current_level >= 3}
             className="px-3.5 py-2 rounded-xl border border-[#DCBFEC] bg-[#EFE3F5] text-[#734785] font-extrabold text-xs hover:bg-[#E2D2EA] transition-all disabled:opacity-40"
           >
             Manual Escalate
           </button>
         </div>
       </div>
+
+      {/* Demo Mode Notification / Banner */}
+      {demoMode && (
+        <div className="bg-[#FFF8E7] border border-[#F3DE9A] text-[#8C5E14] px-5 py-3.5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#E09422] animate-ping shrink-0" />
+            <span>
+              DEMO MODE ACTIVE • 3-Level SLA Escalation Demonstration Sandbox Enabled
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-[10px] font-mono uppercase bg-[#F5E6BA] px-2.5 py-1 rounded-lg text-[#70490C]">
+              Simulate Instant SLA Breach
+            </span>
+            <span className="text-[10px] font-mono uppercase bg-[#E6F4ED] border border-[#B8E0CB] px-2.5 py-1 rounded-lg text-[#1F5443]">
+              Role: Ward Officer (Intact)
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* State Banner */}
       {isEscalated && (
@@ -201,6 +288,126 @@ const OfficerIncidentDetailPage = () => {
                   <span>{incident.departments?.name || 'Sanitation / Solid Waste'}</span>
                 </span>
               </div>
+            </div>
+          </div>
+
+          {/* MUNICIPAL ESCALATION AUDIT TRAIL CARD */}
+          <div className="bg-[#E6F4ED] rounded-2xl p-6 border border-[#B8E0CB] shadow-xs space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h3 className="text-sm font-black text-[#1F5443] uppercase tracking-wider flex items-center gap-2">
+                <Layers className="w-4 h-4 text-[#734785]" />
+                <span>MUNICIPAL ESCALATION AUDIT TRAIL</span>
+              </h3>
+              <span className="text-xs font-bold px-3 py-1 rounded-full bg-[#CEEADA] text-[#1F5443] border border-[#B8E0CB]">
+                Current Tier: Level {incident.current_level || 1} • {levelRoleLabel}
+              </span>
+            </div>
+
+            {/* Level Stepper Progression */}
+            <div className="grid grid-cols-3 gap-2.5 p-3.5 bg-[#DCF0E6] rounded-xl border border-[#B8E0CB]">
+              <div className={`p-2.5 rounded-lg border text-center transition-all ${
+                (incident.current_level || 1) >= 1
+                  ? 'bg-[#CEEADA] border-[#349670] text-[#174437] ring-1 ring-[#349670]'
+                  : 'bg-white/40 border-[#B8E0CB] text-[#75998C]'
+              }`}>
+                <span className="text-[10px] font-black uppercase tracking-wider block">Level 1</span>
+                <span className="text-xs font-extrabold block mt-0.5">Ward Officer</span>
+                <span className="text-[9px] font-medium text-[#4A7365] block">Initial 48h SLA</span>
+              </div>
+
+              <div className={`p-2.5 rounded-lg border text-center transition-all ${
+                (incident.current_level || 1) >= 2
+                  ? 'bg-[#EFE3F5] border-[#734785] text-[#734785] ring-1 ring-[#734785]'
+                  : 'bg-white/40 border-[#B8E0CB] text-[#75998C]'
+              }`}>
+                <span className="text-[10px] font-black uppercase tracking-wider block">Level 2</span>
+                <span className="text-xs font-extrabold block mt-0.5">AEE Senior</span>
+                <span className="text-[9px] font-medium text-[#734785]/80 block">Fresh 24h SLA</span>
+              </div>
+
+              <div className={`p-2.5 rounded-lg border text-center transition-all ${
+                (incident.current_level || 1) >= 3
+                  ? incident.status === 'SLA_BREACHED'
+                    ? 'bg-[#FAECEB] border-[#A6473D] text-[#A6473D] ring-1 ring-[#A6473D]'
+                    : 'bg-[#F5F0D5] border-[#9C621E] text-[#9C621E] ring-1 ring-[#9C621E]'
+                  : 'bg-white/40 border-[#B8E0CB] text-[#75998C]'
+              }`}>
+                <span className="text-[10px] font-black uppercase tracking-wider block">Level 3</span>
+                <span className="text-xs font-extrabold block mt-0.5">Commissioner</span>
+                <span className="text-[9px] font-medium block">
+                  {incident.status === 'SLA_BREACHED' ? 'Final SLA Breach (No L4)' : 'Fresh 12h SLA'}
+                </span>
+              </div>
+            </div>
+
+            {/* Detailed Events Timeline */}
+            <div className="space-y-3 pt-1">
+              {/* Event 1: Creation */}
+              <div className="p-3.5 rounded-xl bg-[#DCF0E6] border border-[#B8E0CB] flex items-start gap-3">
+                <div className="w-7 h-7 rounded-lg bg-[#349670] text-white flex items-center justify-center font-black text-xs shrink-0 mt-0.5">
+                  L1
+                </div>
+                <div className="space-y-0.5 flex-1">
+                  <div className="flex items-center justify-between text-xs font-bold text-[#174437]">
+                    <span>Incident Assigned at Level 1</span>
+                    <span className="text-[#75998C] font-normal text-[11px]">
+                      {new Date(incident.created_at || Date.now()).toLocaleString()}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#4A7365]">
+                    Initial municipal dispatch assigned to Ward Officer authority. Baseline municipal SLA resolution clock started.
+                  </p>
+                </div>
+              </div>
+
+              {/* Event 2+: Escalation records from database */}
+              {escalations.length === 0 && incident.current_level === 1 && (
+                <div className="text-center py-2 text-xs font-semibold text-[#75998C] italic">
+                  No escalations recorded. Incident is operating within Level 1 baseline SLA.
+                </div>
+              )}
+
+              {escalations.map((esc, i) => (
+                <div key={esc.id || i} className="p-3.5 rounded-xl bg-[#EFE3F5] border border-[#DCBFEC] flex items-start gap-3">
+                  <div className="w-7 h-7 rounded-lg bg-[#734785] text-white flex items-center justify-center font-black text-xs shrink-0 mt-0.5">
+                    L{esc.to_level}
+                  </div>
+                  <div className="space-y-0.5 flex-1">
+                    <div className="flex items-center justify-between text-xs font-bold text-[#734785]">
+                      <span>Level {esc.from_level} → Level {esc.to_level} Escalation</span>
+                      <span className="text-[#75998C] font-normal text-[11px]">
+                        {new Date(esc.triggered_at).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#553363] font-medium">
+                      Reason: {esc.reason}
+                    </p>
+                    <div className="text-[10px] text-[#734785] font-bold">
+                      Target Authority: {esc.to_level === 3 ? 'City Commissioner (Executive Level 3)' : 'Assistant Executive Engineer (Technical Level 2)'}
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {/* Final SLA Breach Event if Status is SLA_BREACHED at Level 3 */}
+              {incident.status === 'SLA_BREACHED' && incident.current_level >= 3 && (
+                <div className="p-3.5 rounded-xl bg-[#FAECEB] border border-[#F3C5BF] flex items-start gap-3">
+                  <div className="w-7 h-7 rounded-lg bg-[#A6473D] text-white flex items-center justify-center font-black text-xs shrink-0 mt-0.5">
+                    !
+                  </div>
+                  <div className="space-y-0.5 flex-1">
+                    <div className="flex items-center justify-between text-xs font-bold text-[#A6473D]">
+                      <span>FINAL SLA BREACH REACHED</span>
+                      <span className="text-[#A6473D]/80 font-normal text-[11px]">
+                        {new Date(incident.updated_at || Date.now()).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#7A2A22] font-semibold">
+                      Executive Level 3 SLA expired. Incident has reached Final SLA Breach. No higher municipal authority tier exists (Level 4 does not exist).
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -363,6 +570,41 @@ const OfficerIncidentDetailPage = () => {
                 >
                   <span>Submit Repair Verification</span>
                 </button>
+              </div>
+            )}
+
+            {/* In Demo Mode, render the prominent Simulate SLA Breach Callout in the Action Card */}
+            {demoMode && !isResolved && (
+              <div className="mt-4 pt-4 border-t border-white/15 space-y-2">
+                <div className="flex items-center justify-between text-[11px] font-bold text-[#F3DE9A]">
+                  <span>DEMO PRESENTATION SHORTCUT:</span>
+                  <span>CURRENT: L{incident.current_level || 1}</span>
+                </div>
+                <button
+                  onClick={handleSimulateSlaBreach}
+                  disabled={breachLoading || (incident.status === 'SLA_BREACHED' && incident.current_level >= 3)}
+                  className={`w-full py-2.5 rounded-xl font-black text-xs shadow-sm transition-all flex items-center justify-center gap-2 border ${
+                    incident.status === 'SLA_BREACHED' && incident.current_level >= 3
+                      ? 'bg-white/10 text-white/50 border-white/10 cursor-not-allowed'
+                      : 'bg-[#A6473D] text-white hover:bg-[#8A3B32] border-[#C25B50] active:scale-98'
+                  }`}
+                >
+                  <Clock className={`w-3.5 h-3.5 ${breachLoading ? 'animate-spin' : ''}`} />
+                  <span>
+                    {breachLoading
+                      ? 'Processing...'
+                      : incident.status === 'SLA_BREACHED' && incident.current_level >= 3
+                      ? 'Final SLA Breach Reached (No L4)'
+                      : (incident.current_level || 1) === 1
+                      ? '⚡ Simulate SLA Breach (L1 → L2)'
+                      : (incident.current_level || 1) === 2
+                      ? '⚡ Simulate SLA Breach (L2 → L3)'
+                      : '⚡ Simulate Final SLA Breach'}
+                  </span>
+                </button>
+                {breachMessage && (
+                  <p className="text-[10px] text-[#C8EAD9] text-center font-semibold italic">{breachMessage}</p>
+                )}
               </div>
             )}
           </div>

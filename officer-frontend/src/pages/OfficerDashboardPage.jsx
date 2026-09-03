@@ -56,8 +56,19 @@ const OfficerDashboardPage = () => {
 
   const [activeTab, setActiveTab] = useState(tabFromUrl);
   const [selectedCategory, setSelectedCategory] = useState(categoryFromUrl);
+
+  const [demoMode, setDemoMode] = useState(() => {
+    return localStorage.getItem('civic_demo_mode') === 'true';
+  });
+
+  const toggleDemoMode = () => {
+    const nextVal = !demoMode;
+    setDemoMode(nextVal);
+    localStorage.setItem('civic_demo_mode', String(nextVal));
+  };
+
   const [selectedAuthorityLevel, setSelectedAuthorityLevel] = useState(
-    Math.min(userMaxLevel, Math.max(1, isNaN(levelFromUrl) ? 1 : levelFromUrl))
+    demoMode ? Math.max(1, isNaN(levelFromUrl) ? 1 : levelFromUrl) : Math.min(userMaxLevel, Math.max(1, isNaN(levelFromUrl) ? 1 : levelFromUrl))
   );
   const [searchQuery, setSearchQuery] = useState('');
   const [showMap, setShowMap] = useState(false);
@@ -265,8 +276,8 @@ const OfficerDashboardPage = () => {
   }, [sortedIncidents, activeTab, selectedCategory, selectedAuthorityLevel, searchQuery]);
 
   const handleLevelChange = (lvl) => {
-    if (lvl > userMaxLevel) {
-      setError(`Role '${userRole}' is restricted to Level ${userMaxLevel} operational queue.`);
+    if (!demoMode && lvl > userMaxLevel) {
+      setError(`Role '${userRole}' is restricted to Level ${userMaxLevel} operational queue. Enable Demo Mode to view all escalation tiers.`);
       return;
     }
     setError('');
@@ -324,7 +335,20 @@ const OfficerDashboardPage = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-3 self-stretch md:self-auto justify-between md:justify-end">
+        <div className="flex items-center gap-3 self-stretch md:self-auto justify-between md:justify-end flex-wrap">
+          <button
+            onClick={toggleDemoMode}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all border shadow-xs ${
+              demoMode
+                ? 'bg-[#E09422] text-white border-[#F3DE9A] shadow-md ring-2 ring-white/40'
+                : 'bg-white/15 text-white border-white/25 hover:bg-white/25'
+            }`}
+            title="Toggle Demo Mode for 3-Level SLA Escalation Presentation"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>DEMO MODE: {demoMode ? 'ON' : 'OFF'}</span>
+          </button>
+
           <button
             onClick={() => setShowMap(!showMap)}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-extrabold transition-all border ${
@@ -352,6 +376,26 @@ const OfficerDashboardPage = () => {
           </div>
         </div>
       </div>
+
+      {/* Demo Mode Presentation Banner */}
+      {demoMode && (
+        <div className="bg-[#FFF8E7] border border-[#F3DE9A] text-[#8C5E14] px-5 py-3.5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#E09422] animate-ping shrink-0" />
+            <span>
+              DEMO MODE ACTIVE • 3-Tier SLA Escalation Presentation Sandbox Enabled
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-[10px] font-mono uppercase bg-[#F5E6BA] px-2.5 py-1 rounded-lg text-[#70490C]">
+              Operational Queues Unlocked (L1, L2, L3)
+            </span>
+            <span className="text-[10px] font-mono uppercase bg-[#E6F4ED] border border-[#B8E0CB] px-2.5 py-1 rounded-lg text-[#1F5443]">
+              RBAC Role Intact: {userRole}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Optional Spatial Map View */}
       {showMap && (
@@ -493,7 +537,7 @@ const OfficerDashboardPage = () => {
                 { lvl: 2, label: 'LEVEL 2 • AEE', subtitle: 'Senior Tech' },
                 { lvl: 3, label: 'LEVEL 3 • COMMISSIONER', subtitle: 'Executive' }
               ].map(item => {
-                const isLocked = item.lvl > userMaxLevel;
+                const isLocked = !demoMode && item.lvl > userMaxLevel;
                 const isSelected = selectedAuthorityLevel === item.lvl;
                 return (
                   <button
@@ -507,7 +551,7 @@ const OfficerDashboardPage = () => {
                         ? 'opacity-40 text-[#4A7365] bg-transparent cursor-not-allowed'
                         : 'text-[#174437] hover:bg-[#B8E0CB]/50 font-bold'
                     }`}
-                    title={isLocked ? `Role '${userRole}' cannot access Level ${item.lvl}` : item.label}
+                    title={isLocked ? `Role '${userRole}' cannot access Level ${item.lvl}. Turn on Demo Mode to inspect.` : item.label}
                   >
                     <span>{item.label}</span>
                     <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${isSelected ? 'bg-white/20 text-white' : 'bg-[#B8E0CB] text-[#1F5443]'}`}>

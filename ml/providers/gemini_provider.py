@@ -11,9 +11,9 @@ import config
 logger = logging.getLogger('gemini_provider')
 
 def resolve_effective_model(model_name: str = None) -> str:
-    m = model_name or getattr(config, 'ML_MODEL', None) or 'gemini-3.6-flash'
-    if any(deprecated in str(m) for deprecated in ['3.7', '3.5', '2.0', '1.5', '2.5']):
-        return 'gemini-3.6-flash'
+    m = model_name or getattr(config, 'ML_MODEL', None) or 'gemini-3.5-flash'
+    if any(deprecated in str(m) for deprecated in ['1.5', '2.0', '2.5', '3.6']):
+        return 'gemini-3.5-flash'
     return m
 
 class GeminiProvider(BaseMlProvider):
@@ -243,7 +243,7 @@ Provide your response in raw JSON adhering to this exact schema:
         if not config.GEMINI_API_KEY or not image_bytes:
             return ""
         try:
-            current_model = getattr(config, 'ML_MODEL', None) or self.model
+            current_model = resolve_effective_model(getattr(config, 'ML_MODEL', None) or self.model)
             base64_data = base64.b64encode(image_bytes).decode('utf-8')
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={config.GEMINI_API_KEY}"
             prompt = "Describe the public civic infrastructure issue visible in this image in one concise, factual sentence. Do not include measurements, dates, causes, or addresses not visible in the image."
@@ -312,8 +312,8 @@ Provide your response in raw JSON adhering to this exact schema:
                     {
                         "parts": [
                             {"text": prompt},
-                            {"inlineData": {"mimeType": "image/jpeg", "data": before_b64}},
-                            {"inlineData": {"mimeType": "image/jpeg", "data": after_b64}}
+                            {"inline_data": {"mime_type": "image/jpeg", "data": before_b64}},
+                            {"inline_data": {"mime_type": "image/jpeg", "data": after_b64}}
                         ]
                     }
                 ],

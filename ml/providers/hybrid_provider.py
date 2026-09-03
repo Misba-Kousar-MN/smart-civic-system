@@ -10,7 +10,7 @@ logger = logging.getLogger('hybrid_provider')
 class HybridProvider(BaseMlProvider):
     def __init__(self):
         super().__init__('hybrid')
-        self.model = getattr(config, 'ML_MODEL', None) or 'gemini-3.7-flash'
+        self.model = getattr(config, 'ML_MODEL', None) or 'gemini-3.5-flash'
         logger.info(f"[HYBRID] Initializing Hybrid AI Provider (YOLO26 + {self.model})...")
         self.yolo = YoloProvider()
         self.gemini = GeminiProvider()

@@ -30,5 +30,6 @@ module.exports = {
   SUPABASE_STORAGE_BUCKET_EVIDENCE: process.env.SUPABASE_STORAGE_BUCKET_EVIDENCE || 'resolution-evidence',
   CORS_ALLOWED_ORIGINS: (process.env.CORS_ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:5173').split(','),
   SPATIAL_DEDUPLICATION_RADIUS_METERS: parseFloat(process.env.SPATIAL_DEDUPLICATION_RADIUS_METERS || '50'),
-  SLA_TIMEZONE: process.env.SLA_TIMEZONE || 'Asia/Kolkata'
+  SLA_TIMEZONE: process.env.SLA_TIMEZONE || 'Asia/Kolkata',
+  DEMO_MODE_ENABLED: process.env.DEMO_MODE_ENABLED === 'true' || process.env.NODE_ENV !== 'production'
 };

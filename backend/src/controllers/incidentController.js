@@ -1,6 +1,7 @@
 const { supabaseService, createUserClient } = require('../config/supabase');
 const incidentService = require('../services/incidentService');
 const ApiError = require('../errors/apiError');
+const env = require('../config/env');
 
 /**
  * GET /incidents
@@ -14,14 +15,19 @@ async function getIncidents(req, res, next) {
 
     const { status, priority_level, department_id, zone_id, citizen_only, level } = req.query;
 
-    // Server-Side RBAC Level Access Validation
+    let query = supabaseService
+      .from('incidents')
+      .select('id, category, severity, priority_score, priority_level, status, current_level, location, address, zone_id, department_id, sla_deadline, assigned_officer_id, created_at, updated_at, departments(id, name, code), zones(id, name, code), incident_reports(is_primary, reports(image_url, voice_transcript, ai_category, ai_confidence))', { count: 'exact' });
+
+    // Server-Side RBAC Level Access Validation & Demo Mode View Filtering
     if (level) {
       const requestedLevel = parseInt(level, 10);
       let maxAllowedLevel = 1;
       if (req.user.role === 'aee') maxAllowedLevel = 2;
       if (['commissioner', 'admin'].includes(req.user.role)) maxAllowedLevel = 3;
 
-      if (requestedLevel > maxAllowedLevel && req.user.role !== 'admin') {
+      // In production mode, enforce strict level view ceiling according to role. In demo mode, permit presenter to view all queues.
+      if (requestedLevel > maxAllowedLevel && req.user.role !== 'admin' && !env.DEMO_MODE_ENABLED) {
         throw ApiError.forbidden(
           'AUTH_INSUFFICIENT_ROLE',
           `Role '${req.user.role}' is not authorized to access Level ${requestedLevel} operational queue.`
@@ -29,10 +35,6 @@ async function getIncidents(req, res, next) {
       }
       query = query.eq('current_level', requestedLevel);
     }
-
-    let query = supabaseService
-      .from('incidents')
-      .select('id, category, severity, priority_score, priority_level, status, current_level, location, address, zone_id, department_id, sla_deadline, assigned_officer_id, created_at, updated_at, departments(id, name, code), zones(id, name, code), incident_reports(is_primary, reports(image_url, voice_transcript, ai_category, ai_confidence))', { count: 'exact' });
 
     // 1. Citizen Scoping (only when citizen_only query parameter is explicitly true)
     if (citizen_only === 'true') {
@@ -509,6 +511,35 @@ async function resumeSla(req, res, next) {
   }
 }
 
+/**
+ * POST /incidents/:incidentId/demo/simulate-sla-breach
+ * Instant prototype demonstration endpoint for 3-level SLA breach escalation
+ */
+async function simulateSlaBreach(req, res, next) {
+  try {
+    if (!env.DEMO_MODE_ENABLED) {
+      throw ApiError.forbidden(
+        'DEMO_MODE_DISABLED',
+        'Demo Mode is disabled in this environment. SLA breach simulation is not permitted.'
+      );
+    }
+
+    const { incidentId } = req.params;
+    const result = await incidentService.simulateSlaBreach({
+      user: req.user,
+      incidentId
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+      message: result.message
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   getIncidents,
   getIncidentById,
@@ -519,5 +550,6 @@ module.exports = {
   getResolutionEvidence,
   checkSlaBreaches,
   pauseSla,
-  resumeSla
+  resumeSla,
+  simulateSlaBreach
 };

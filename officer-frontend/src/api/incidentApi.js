@@ -18,5 +18,7 @@ export const incidentApi = {
   pauseSla: (incidentId, data) =>
     client.post(`/incidents/${incidentId}/pause-sla`, data),
   resumeSla: (incidentId) =>
-    client.post(`/incidents/${incidentId}/resume-sla`)
+    client.post(`/incidents/${incidentId}/resume-sla`),
+  simulateSlaBreach: (incidentId) =>
+    client.post(`/incidents/${incidentId}/demo/simulate-sla-breach`)
 };

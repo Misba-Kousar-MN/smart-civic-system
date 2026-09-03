@@ -22,6 +22,13 @@ router.post(
   incidentController.escalateIncident
 );
 
+router.post(
+  '/:incidentId/demo/simulate-sla-breach',
+  authenticate,
+  authorize('ward_officer', 'aee', 'commissioner', 'admin'),
+  incidentController.simulateSlaBreach
+);
+
 router.get(
   '/:incidentId/escalations',
   authenticate,
