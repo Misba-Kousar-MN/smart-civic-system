@@ -73,20 +73,21 @@ async function runFullVerificationSuite() {
       password: citizenPassword
     });
 
-    if (citizenAuth.error) {
-      await supabaseService.auth.signUp({
+    if (citizenAuth.error || !citizenAuth.data.session) {
+      await supabaseService.auth.admin.createUser({
         email: citizenEmail,
         password: citizenPassword,
-        options: { data: { full_name: 'Test Citizen' } }
-      });
+        email_confirm: true,
+        user_metadata: { full_name: 'Test Citizen' }
+      }).catch(() => {});
       citizenAuth = await supabaseService.auth.signInWithPassword({
         email: citizenEmail,
         password: citizenPassword
       });
     }
 
-    const citizenToken = citizenAuth.data.session?.access_token;
-    const citizenUserId = citizenAuth.data.user.id;
+    const citizenToken = citizenAuth.data?.session?.access_token;
+    const citizenUserId = citizenAuth.data?.user?.id;
     assert(Boolean(citizenToken), `Citizen User Authenticated (ID: ${citizenUserId})`);
 
     const officerEmail = 'testofficer@example.com';
@@ -97,20 +98,21 @@ async function runFullVerificationSuite() {
       password: officerPassword
     });
 
-    if (officerAuth.error) {
-      await supabaseService.auth.signUp({
+    if (officerAuth.error || !officerAuth.data.session) {
+      await supabaseService.auth.admin.createUser({
         email: officerEmail,
         password: officerPassword,
-        options: { data: { full_name: 'Test Ward Officer' } }
-      });
+        email_confirm: true,
+        user_metadata: { full_name: 'Test Ward Officer' }
+      }).catch(() => {});
       officerAuth = await supabaseService.auth.signInWithPassword({
         email: officerEmail,
         password: officerPassword
       });
     }
 
-    const officerToken = officerAuth.data.session?.access_token;
-    const officerUserId = officerAuth.data.user.id;
+    const officerToken = officerAuth.data?.session?.access_token;
+    const officerUserId = officerAuth.data?.user?.id;
 
     await supabaseService
       .from('profiles')

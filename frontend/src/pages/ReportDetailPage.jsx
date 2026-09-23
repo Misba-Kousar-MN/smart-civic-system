@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   ArrowLeft,
   MapPin,
   Check,
   Volume2,
-  Phone,
   Bell,
-  Users
+  Users,
+  Building2
 } from 'lucide-react';
 import { reportApi } from '../api/reportApi';
 import { incidentApi } from '../api/incidentApi';
@@ -15,13 +15,6 @@ import StatusBadge from '../components/StatusBadge';
 import InteractiveMap from '../components/InteractiveMap';
 import { parseCoordinates, formatCoordinates } from '../utils/locationUtils';
 import { supabase } from '../config/supabase';
-
-const TRACKING_STEPS = [
-  { key: 'OPEN', label: 'Submitted' },
-  { key: 'REVIEWED', label: 'Assigned' },
-  { key: 'IN_PROGRESS', label: 'In Progress' },
-  { key: 'RESOLVED', label: 'Resolved' }
-];
 
 const ReportDetailPage = () => {
   const { reportId } = useParams();
@@ -75,6 +68,122 @@ const ReportDetailPage = () => {
     };
   }, [reportId]);
 
+  const incident = incidentData?.incident || null;
+  const escalations = incidentData?.escalations || [];
+  const linkedReports = incidentData?.reports || [];
+  const reportCount = incident?.report_count || linkedReports.length || 1;
+
+  const actualLevel = Number(incident?.current_level) || 1;
+  const actualStatus = incident?.status || report?.status || 'OPEN';
+  const isResolved = actualStatus === 'RESOLVED' || actualStatus === 'CLOSED';
+
+  const hasL2Escalation = actualLevel >= 2 || escalations.some(e => e.to_level >= 2);
+  const hasL3Escalation = actualLevel >= 3 || escalations.some(e => e.to_level >= 3);
+
+  // Dynamic Citizen Progress Pipeline (reflects the actual path taken)
+  const citizenSteps = useMemo(() => {
+    const steps = [
+      {
+        id: 'step-received',
+        key: 'RECEIVED',
+        label: 'Report Received',
+        desc: 'Your complaint was registered and logged.',
+        state: 'completed'
+      },
+      {
+        id: 'step-handled',
+        key: 'HANDLED',
+        label: 'Being Handled',
+        desc: 'The municipal team is addressing the reported issue.',
+        state: (actualStatus === 'OPEN' && !hasL2Escalation && !isResolved)
+          ? 'current'
+          : (actualStatus !== 'OPEN' || hasL2Escalation || isResolved)
+          ? 'completed'
+          : 'pending'
+      }
+    ];
+
+    if (hasL2Escalation) {
+      steps.push({
+        id: 'step-under-review',
+        key: 'UNDER_REVIEW',
+        label: 'Under Review',
+        desc: 'Moved for additional supervisory coordination.',
+        state: (actualLevel === 2 && !isResolved)
+          ? 'current'
+          : (isResolved || actualLevel > 2)
+          ? 'completed'
+          : 'pending'
+      });
+    }
+
+    if (hasL3Escalation) {
+      steps.push({
+        id: 'step-senior-review',
+        key: 'SENIOR_REVIEW',
+        label: 'Senior Review',
+        desc: 'Under executive administrative oversight.',
+        state: (actualLevel === 3 && !isResolved)
+          ? 'current'
+          : isResolved
+          ? 'completed'
+          : 'pending'
+      });
+    }
+
+    steps.push({
+      id: 'step-resolved',
+      key: 'RESOLVED',
+      label: actualStatus === 'REOPENED' ? 'Additional Work' : 'Resolved',
+      desc: isResolved
+        ? 'The reported issue has been verified and resolved.'
+        : actualStatus === 'REOPENED'
+        ? 'Further repair verification required.'
+        : 'Final resolution upon verification.',
+      state: isResolved ? 'completed' : actualStatus === 'REOPENED' ? 'current' : 'pending'
+    });
+
+    return steps;
+  }, [actualStatus, actualLevel, hasL2Escalation, hasL3Escalation, isResolved]);
+
+  // Citizen-friendly status narrative
+  const citizenStatusSummary = useMemo(() => {
+    if (isResolved) {
+      return {
+        title: 'Resolved',
+        text: 'Your complaint has been verified and marked as resolved by municipal authorities.'
+      };
+    }
+    if (actualStatus === 'REOPENED') {
+      return {
+        title: 'Additional Work Required',
+        text: 'The reported issue is undergoing additional field repair and verification.'
+      };
+    }
+    if (actualLevel >= 3) {
+      return {
+        title: 'Under Senior Review',
+        text: 'Your complaint requires further administrative attention.'
+      };
+    }
+    if (actualLevel === 2) {
+      return {
+        title: 'Under Supervisory Review',
+        text: 'Your complaint has been moved for additional supervisory review.'
+      };
+    }
+    if (actualStatus === 'IN_PROGRESS') {
+      return {
+        title: 'Being Handled',
+        text: 'The municipal team is currently working on your complaint.'
+      };
+    }
+    return {
+      title: 'Report Received',
+      text: 'Your complaint was received and assigned for municipal action.'
+    };
+  }, [isResolved, actualStatus, actualLevel]);
+
   if (loading) {
     return (
       <div className="py-24 text-center text-xs text-[#648274] font-medium space-y-3">
@@ -97,20 +206,6 @@ const ReportDetailPage = () => {
   }
 
   const coords = parseCoordinates(report.location);
-  const incident = incidentData?.incident || null;
-  const linkedReports = incidentData?.reports || [];
-  const reportCount = incident?.report_count || linkedReports.length || 1;
-
-  // Determine current status step index
-  const currentStatus = report.status || 'OPEN';
-  const getStepIndex = (status) => {
-    if (status === 'RESOLVED' || status === 'CLOSED') return 3;
-    if (status === 'IN_PROGRESS' || status === 'ESCALATED') return 2;
-    if (status === 'REVIEWED') return 1;
-    return 0;
-  };
-  const activeStepIdx = getStepIndex(currentStatus);
-
   const isVoiceNote = Boolean(report.voice_note_url);
   const descriptionContent = report.voice_transcript || report.description || 'Civic issue recorded for municipal resolution.';
 
@@ -132,22 +227,22 @@ const ReportDetailPage = () => {
         {/* LEFT COLUMN: Visual Evidence & Location Map */}
         <div className="space-y-4">
           
-          {/* Photo Gallery */}
+          {/* Photo Gallery: Labeled "YOUR REPORT" */}
           <div className="bg-white p-4 rounded-[16px] border border-[#DDEBE2] shadow-xs space-y-3">
             <div className="text-xs font-semibold text-[#237A52] uppercase tracking-wider">
-              Submitted Photo Evidence
+              YOUR REPORT
             </div>
             <div className="relative rounded-xl overflow-hidden border border-[#DDEBE2] bg-[#FBFDFC] aspect-video">
-              <img src={report.image_url} alt="Evidence" className="w-full h-full object-cover" />
+              <img src={report.image_url} alt="Submitted Report Evidence" className="w-full h-full object-cover" />
             </div>
           </div>
 
-          {/* Location Map Preview */}
+          {/* Location Map Preview: Labeled "REPORTED LOCATION" */}
           <div className="bg-white p-4 rounded-[16px] border border-[#DDEBE2] shadow-xs space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-[#237A52] uppercase tracking-wider flex items-center gap-1">
                 <MapPin className="w-3.5 h-3.5 text-[#237A52]" />
-                <span>Location</span>
+                <span>REPORTED LOCATION</span>
               </span>
               <span className="text-[11px] font-semibold text-[#237A52]">Confirmed GPS</span>
             </div>
@@ -180,11 +275,11 @@ const ReportDetailPage = () => {
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
-                  <StatusBadge status={currentStatus} />
-                  <span className="text-[10px] font-mono text-[#8AA095]">RPT-2025-{report.id.substring(0, 6)}</span>
+                  <StatusBadge status={actualStatus} />
+                  <span className="text-[10px] font-mono text-[#8AA095]">RPT-{report.id.substring(0, 8)}</span>
                 </div>
                 <h1 className="text-xl font-bold text-[#163A2C] tracking-tight">
-                  {report.ai_category || report.category || 'Pothole on Main Street'}
+                  {report.ai_category || report.category || 'Civic Grievance'}
                 </h1>
               </div>
               <span className="text-[11px] text-[#8AA095] font-medium shrink-0">
@@ -205,7 +300,7 @@ const ReportDetailPage = () => {
               <div className="p-3 rounded-xl bg-[#EAF7EF] border border-[#D5EBDD] flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-xs font-bold text-[#237A52]">
                   <Volume2 className="w-4 h-4 text-[#237A52]" />
-                  <span>Voice Note (00:12)</span>
+                  <span>Voice Note</span>
                 </div>
                 <audio controls src={report.voice_note_url} className="h-8 max-w-[180px]" />
               </div>
@@ -221,28 +316,36 @@ const ReportDetailPage = () => {
 
           </div>
 
-          {/* Visual Tracking Stepper Card */}
+          {/* Citizen-Facing Progress Tracker Card */}
           <div className="bg-white p-5 rounded-[16px] border border-[#DDEBE2] shadow-xs space-y-4">
             <div className="text-xs font-semibold text-[#237A52] uppercase tracking-wider">
-              Track Report Progress
+              Track Complaint Progress
             </div>
 
-            {/* Stepper Timeline Bar */}
-            <div className="grid grid-cols-4 gap-1 relative pt-1">
-              {TRACKING_STEPS.map((step, idx) => {
-                const isDone = idx <= activeStepIdx;
-                const isCurrent = idx === activeStepIdx;
+            {/* Dynamic Stepper Bar (Showing only actual path taken) */}
+            <div className={`grid grid-cols-${citizenSteps.length} gap-1 relative pt-1`}>
+              {citizenSteps.map((step) => {
+                const isCompleted = step.state === 'completed';
+                const isCurrent = step.state === 'current';
 
                 return (
-                  <div key={step.key} className="text-center space-y-1 z-10">
+                  <div key={step.id} className="text-center space-y-1 z-10">
                     <div className={`w-7 h-7 rounded-full mx-auto flex items-center justify-center text-xs font-bold transition-all ${
-                      isDone
+                      isCompleted
                         ? 'bg-[#237A52] text-white'
+                        : isCurrent
+                        ? 'bg-[#237A52] text-white ring-2 ring-[#237A52]/30'
                         : 'bg-[#F1FAF4] text-[#8AA095] border border-[#DDEBE2]'
                     }`}>
-                      {isDone ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : idx + 1}
+                      {isCompleted ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : isCurrent ? '●' : '○'}
                     </div>
-                    <div className={`text-[10px] ${isCurrent ? 'font-bold text-[#237A52]' : isDone ? 'font-semibold text-[#163A2C]' : 'text-[#8AA095]'}`}>
+                    <div className={`text-[10px] ${
+                      isCurrent
+                        ? 'font-bold text-[#237A52]'
+                        : isCompleted
+                        ? 'font-semibold text-[#163A2C]'
+                        : 'text-[#8AA095]'
+                    }`}>
                       {step.label}
                     </div>
                   </div>
@@ -252,104 +355,81 @@ const ReportDetailPage = () => {
 
             {/* Status Narrative Box */}
             <div className="p-3.5 rounded-xl bg-[#FBFDFC] border border-[#DDEBE2] space-y-1">
-              <div className="text-xs font-bold text-[#237A52] capitalize">
-                Status: {currentStatus.replace('_', ' ')}
+              <div className="text-xs font-bold text-[#237A52]">
+                {citizenStatusSummary.title}
               </div>
-              <p className="text-xs text-[#648274]">
-                {currentStatus === 'RESOLVED'
-                  ? 'Your issue has been resolved by municipal authorities.'
-                  : currentStatus === 'IN_PROGRESS'
-                  ? 'Your issue is currently being addressed by our team.'
-                  : 'Your report has been registered and sent to the department.'}
+              <p className="text-xs text-[#648274] leading-relaxed">
+                {citizenStatusSummary.text}
               </p>
             </div>
 
-            {/* Citizen SLA Accountability Box */}
-            {(() => {
-              const slaDeadline = incident?.sla_deadline || report?.sla_deadline;
-              const currentLevel = incident?.current_level || 1;
-              const isResolved = currentStatus === 'RESOLVED' || currentStatus === 'CLOSED';
-
-              let remainingHours = null;
-              let isSlaBreached = false;
-
-              if (slaDeadline && !isResolved) {
-                const diffMs = new Date(slaDeadline).getTime() - Date.now();
-                remainingHours = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60)));
-                isSlaBreached = diffMs <= 0;
-              }
-
-              let slaTitle = "⏱ Expected Resolution";
-              let slaSubtitle = remainingHours !== null ? `Target resolution within ${remainingHours} hours` : "Resolution on track";
-              let slaBadge = "🟢 On track";
-              let slaBg = "bg-[#F1FAF4] border-[#DDEBE2]";
-              let slaText = "Your report is registered and operating within normal municipal timeframes.";
-
-              if (isResolved) {
-                slaTitle = "✓ Issue Resolved";
-                slaSubtitle = "Completed by municipal authorities";
-                slaBadge = "RESOLVED";
-                slaBg = "bg-[#EAF7EF] border-[#D5EBDD]";
-                slaText = "This civic report has been verified and resolved.";
-              } else if (isSlaBreached && currentLevel >= 3) {
-                slaTitle = "🔴 Resolution Delayed";
-                slaSubtitle = "Overdue for senior municipal review";
-                slaBadge = "Priority Attention";
-                slaBg = "bg-[#FAECEB] border-[#F3C5BF]";
-                slaText = "Your report has exceeded the expected resolution timeframe and remains under senior municipal review.";
-              } else if (currentLevel >= 3) {
-                slaTitle = "⚠️ Higher-Level Review";
-                slaSubtitle = slaDeadline ? `Updated target: ${new Date(slaDeadline).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : "Senior review active";
-                slaBadge = "Escalated Review";
-                slaBg = "bg-[#FFF8E7] border-[#FCE3B4]";
-                slaText = "Your report has been escalated for senior executive review because the initial resolution timeframe was exceeded.";
-              } else if (currentLevel === 2 || isSlaBreached) {
-                slaTitle = "⚠️ Taking Longer Than Expected";
-                slaSubtitle = slaDeadline ? `Updated target: ${new Date(slaDeadline).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : "Higher-level review active";
-                slaBadge = "Escalated";
-                slaBg = "bg-[#FFF8E7] border-[#FCE3B4]";
-                slaText = "Your report exceeded its initial resolution timeframe and has been automatically escalated for higher-level technical review.";
-              }
-
-              return (
-                <div className={`p-4 rounded-xl border space-y-1.5 ${slaBg}`}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black text-[#163A2C]">
-                      {slaTitle}
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-white/80 border border-[#DDEBE2] text-[#237A52]">
-                      {slaBadge}
-                    </span>
+            {/* Progress History List */}
+            <div className="pt-2 border-t border-[#DDEBE2] space-y-2">
+              <div className="text-[10px] font-bold text-[#8AA095] uppercase">
+                Progress Updates
+              </div>
+              <div className="space-y-2 text-xs">
+                <div className="p-2.5 rounded-xl bg-[#F1FAF4] border border-[#DDEBE2] flex items-start gap-2.5">
+                  <span className="w-2 h-2 rounded-full bg-[#237A52] mt-1.5 shrink-0" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold text-[#163A2C] block">Complaint Registered</span>
+                    <p className="text-[11px] text-[#648274]">
+                      Citizen report received and registered in Davangere municipal operations.
+                    </p>
                   </div>
-                  <div className="text-[11px] font-bold text-[#237A52]">
-                    {slaSubtitle}
-                  </div>
-                  <p className="text-[11px] text-[#648274] font-medium leading-relaxed">
-                    {slaText}
-                  </p>
                 </div>
-              );
-            })()}
 
-            {/* Assigned Officer Information Card */}
+                {hasL2Escalation && (
+                  <div className="p-2.5 rounded-xl bg-[#FBF2FD] border border-[#E9D5F5] flex items-start gap-2.5">
+                    <span className="w-2 h-2 rounded-full bg-[#734785] mt-1.5 shrink-0" />
+                    <div className="space-y-0.5">
+                      <span className="font-bold text-[#553363] block">Under Supervisory Review</span>
+                      <p className="text-[11px] text-[#6E4E7A]">
+                        Moved for additional supervisory review and coordination.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {hasL3Escalation && (
+                  <div className="p-2.5 rounded-xl bg-[#FDF4F3] border border-[#F6D0CC] flex items-start gap-2.5">
+                    <span className="w-2 h-2 rounded-full bg-[#A6473D] mt-1.5 shrink-0" />
+                    <div className="space-y-0.5">
+                      <span className="font-bold text-[#7A2A22] block">Senior Administrative Attention</span>
+                      <p className="text-[11px] text-[#8C3A33]">
+                        Complaint escalated for senior administrative attention.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {isResolved && (
+                  <div className="p-2.5 rounded-xl bg-[#EAF7EF] border border-[#D5EBDD] flex items-start gap-2.5">
+                    <span className="w-2 h-2 rounded-full bg-[#237A52] mt-1.5 shrink-0" />
+                    <div className="space-y-0.5">
+                      <span className="font-bold text-[#237A52] block">Resolved</span>
+                      <p className="text-[11px] text-[#2D8A5B]">
+                        Field work completed and verified by municipal authorities.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Assigned Municipal Department */}
             <div className="p-3 rounded-xl bg-white border border-[#DDEBE2] flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-[#237A52] text-white flex items-center justify-center font-bold text-xs">
-                  RO
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-[#EAF7EF] text-[#237A52] flex items-center justify-center font-bold text-xs">
+                  <Building2 className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="text-xs font-bold text-[#163A2C]">Rahul Kumar</div>
-                  <div className="text-[10px] text-[#648274]">Assigned Ward Officer</div>
+                  <div className="text-xs font-bold text-[#163A2C]">
+                    {incident?.departments?.name || report?.department_name || 'Davangere City Corporation'}
+                  </div>
+                  <div className="text-[10px] text-[#648274]">Assigned Municipal Department</div>
                 </div>
               </div>
-
-              <button
-                onClick={() => alert('Contacting Ward Officer Helpline: 1800-425-9999')}
-                className="w-8 h-8 rounded-full bg-[#EAF7EF] text-[#237A52] flex items-center justify-center border border-[#D5EBDD] hover:bg-[#237A52] hover:text-white transition-colors cursor-pointer"
-                title="Call Officer"
-              >
-                <Phone className="w-4 h-4" />
-              </button>
             </div>
 
             {/* Notification Toggle Button */}

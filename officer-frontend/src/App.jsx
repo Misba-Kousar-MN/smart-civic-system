@@ -2,7 +2,10 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { RealtimeProvider } from './context/RealtimeContext';
+import { AuthorityViewProvider } from './context/AuthorityViewContext';
+import { DemoClockProvider } from './context/DemoClockContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import ErrorBoundary from './components/ErrorBoundary';
 
 import OfficerNavbar from './components/OfficerNavbar';
 import OfficerSidebar from './components/OfficerSidebar';
@@ -16,11 +19,11 @@ import OfficerProfilePage from './pages/OfficerProfilePage';
 
 const OfficerLayout = ({ children }) => {
   return (
-    <div className="flex min-h-screen bg-[#F8FAFC]">
+    <div className="flex min-h-screen bg-[#F0F8F5]">
       <OfficerSidebar />
-      <div className="flex-1 flex flex-col min-w-0 md:pl-[240px]">
+      <div className="flex-1 flex flex-col min-w-0 md:pl-[240px] overflow-hidden">
         <OfficerNavbar />
-        <main className="flex-1 p-4 sm:p-6 md:p-8 max-w-[1280px] w-full mx-auto">{children}</main>
+        <main className="flex-1 p-3 sm:p-4 lg:p-5 w-full">{children}</main>
       </div>
     </div>
   );
@@ -48,74 +51,80 @@ function App() {
   return (
     <AuthProvider>
       <RealtimeProvider>
-        <BrowserRouter>
-          <Routes>
-            {/* Public Officer Auth */}
-            <Route path="/officer/login" element={<OfficerLoginPage />} />
-            <Route path="/officer/register" element={<OfficerRegisterPage />} />
+        <AuthorityViewProvider>
+          <DemoClockProvider>
+            <BrowserRouter>
+              <Routes>
+              {/* Public Officer Auth */}
+              <Route path="/officer/login" element={<OfficerLoginPage />} />
+              <Route path="/officer/register" element={<OfficerRegisterPage />} />
 
-            {/* Protected Officer Routes */}
-            <Route
-              path="/officer/dashboard"
-              element={
-                <ProtectedRoute>
-                  <OfficerLayout>
-                    <OfficerDashboardPage />
-                  </OfficerLayout>
-                </ProtectedRoute>
-              }
-            />
+              {/* Protected Officer Routes */}
+              <Route
+                path="/officer/dashboard"
+                element={
+                  <ProtectedRoute>
+                    <OfficerLayout>
+                      <OfficerDashboardPage />
+                    </OfficerLayout>
+                  </ProtectedRoute>
+                }
+              />
 
-            <Route
-              path="/officer/incidents"
-              element={
-                <ProtectedRoute>
-                  <OfficerLayout>
-                    <OfficerDashboardPage />
-                  </OfficerLayout>
-                </ProtectedRoute>
-              }
-            />
+              <Route
+                path="/officer/incidents"
+                element={
+                  <ProtectedRoute>
+                    <OfficerLayout>
+                      <OfficerDashboardPage />
+                    </OfficerLayout>
+                  </ProtectedRoute>
+                }
+              />
 
-            <Route
-              path="/officer/incidents/:incidentId"
-              element={
-                <ProtectedRoute>
-                  <OfficerLayout>
-                    <OfficerIncidentDetailPage />
-                  </OfficerLayout>
-                </ProtectedRoute>
-              }
-            />
+              <Route
+                path="/officer/incidents/:incidentId"
+                element={
+                  <ProtectedRoute>
+                    <OfficerLayout>
+                      <ErrorBoundary>
+                        <OfficerIncidentDetailPage />
+                      </ErrorBoundary>
+                    </OfficerLayout>
+                  </ProtectedRoute>
+                }
+              />
 
-            <Route
-              path="/officer/notifications"
-              element={
-                <ProtectedRoute>
-                  <OfficerLayout>
-                    <OfficerNotificationsPage />
-                  </OfficerLayout>
-                </ProtectedRoute>
-              }
-            />
+              <Route
+                path="/officer/notifications"
+                element={
+                  <ProtectedRoute>
+                    <OfficerLayout>
+                      <OfficerNotificationsPage />
+                    </OfficerLayout>
+                  </ProtectedRoute>
+                }
+              />
 
-            <Route
-              path="/officer/profile"
-              element={
-                <ProtectedRoute>
-                  <OfficerLayout>
-                    <OfficerProfilePage />
-                  </OfficerLayout>
-                </ProtectedRoute>
-              }
-            />
+              <Route
+                path="/officer/profile"
+                element={
+                  <ProtectedRoute>
+                    <OfficerLayout>
+                      <OfficerProfilePage />
+                    </OfficerLayout>
+                  </ProtectedRoute>
+                }
+              />
 
-            {/* Default Catch-all Redirect */}
-            <Route path="*" element={<RootRedirect />} />
-          </Routes>
-        </BrowserRouter>
-      </RealtimeProvider>
-    </AuthProvider>
+              {/* Default Catch-all Redirect */}
+              <Route path="*" element={<RootRedirect />} />
+            </Routes>
+          </BrowserRouter>
+        </DemoClockProvider>
+      </AuthorityViewProvider>
+    </RealtimeProvider>
+  </AuthProvider>
   );
 }
 

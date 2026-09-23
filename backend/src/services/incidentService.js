@@ -3,6 +3,8 @@ const { supabaseService, createUserClient } = require('../config/supabase');
 const env = require('../config/env');
 const mlClient = require('../integrations/ml/mlClient');
 const ApiError = require('../errors/apiError');
+const { getResponsibilityForIncident, getRoleTitleForLevel } = require('../config/responsibilityMatrix');
+const simulationClockService = require('./simulationClockService');
 
 // Valid status transitions map
 const VALID_TRANSITIONS = {
@@ -82,13 +84,13 @@ async function escalateIncident({ user, incidentId, reason }) {
   if (user.role === 'ward_officer' && incident.current_level !== 1) {
     throw ApiError.forbidden(
       'ESCALATION_UNAUTHORIZED',
-      'Ward Officer (Level 1) can only escalate Level 1 incidents to Level 2.'
+      'Operational Authority (Level 1) can only escalate Level 1 incidents to Level 2.'
     );
   }
   if (user.role === 'aee' && incident.current_level !== 2) {
     throw ApiError.forbidden(
       'ESCALATION_UNAUTHORIZED',
-      'Assistant Executive Engineer (Level 2) can only escalate Level 2 incidents to Level 3.'
+      'Supervisory Authority (Level 2) can only escalate Level 2 incidents to Level 3.'
     );
   }
 
@@ -388,16 +390,25 @@ async function submitResolutionEvidence({ user, incidentId, files }) {
 }
 
 /**
- * Automatically check and escalate active overdue incidents (SLA breach)
+ * Automatically check and escalate active overdue incidents (SLA breach).
+ * Uses the atomic process_incident_escalation DB RPC — safe for concurrent workers,
+ * idempotent under repeated polling, and reads SLA policy from the database.
  */
 async function checkAndEscalateSlaBreaches() {
-  const nowIso = new Date().toISOString();
-  const { data: overdueIncidents } = await supabaseService
+  const nowIso = simulationClockService.getEffectiveIso();
+
+  // Fetch candidates — DB RPC will verify & lock each row atomically
+  const { data: overdueIncidents, error: fetchErr } = await supabaseService
     .from('incidents')
     .select('id, current_level, status, sla_deadline, category')
-    .in('status', ['OPEN', 'IN_PROGRESS', 'REOPENED', 'ESCALATED', 'SLA_BREACHED'])
+    .in('status', ['OPEN', 'IN_PROGRESS', 'REOPENED', 'ESCALATED'])
     .lt('sla_deadline', nowIso)
     .lte('current_level', 3);
+
+  if (fetchErr) {
+    console.error('[SLA_CHECKER] Failed to fetch overdue incidents:', fetchErr.message);
+    return { escalated_count: 0 };
+  }
 
   if (!overdueIncidents || overdueIncidents.length === 0) {
     return { escalated_count: 0 };
@@ -406,74 +417,55 @@ async function checkAndEscalateSlaBreaches() {
   let count = 0;
   for (const inc of overdueIncidents) {
     try {
-      const fromLevel = inc.current_level || 1;
-      
-      if (fromLevel >= 3) {
-        // Level 3 SLA Expiry -> FINAL SLA BREACH (No Level 4 created, remains Level 3)
-        const updateRes = await supabaseService
-          .from('incidents')
-          .update({
-            status: 'ESCALATED',
-            current_level: 3,
-            updated_at: nowIso
-          })
-          .eq('id', inc.id);
+      // process_incident_escalation is SECURITY DEFINER and handles:
+      //   - FOR UPDATE row lock (concurrency safety)
+      //   - p_expected_level guard (idempotency — stale reads become no-ops)
+      //   - p_expected_sla_deadline guard (double-safety)
+      //   - Level 3 terminal breach (once, sets SLA_BREACHED)
+      //   - Normal escalation (reads sla_policies for fresh SLA — no hardcoded hours)
+      //   - Writes escalation record + status_history atomically
+      const { data: rpcResult, error: rpcErr } = await supabaseService.rpc(
+        'process_incident_escalation',
+        {
+          p_incident_id: inc.id,
+          p_reason: `Automated SLA breach escalation. Level ${inc.current_level} SLA expired at ${new Date(inc.sla_deadline).toISOString()}.`,
+          p_expected_level: inc.current_level,
+          p_expected_sla_deadline: inc.sla_deadline,
+          p_effective_now: nowIso,
+          p_actor_id: null,
+          p_source: 'scheduler'
+        }
+      );
 
-        console.log(`[DAEMON FINAL BREACH] Incident ${inc.id}: Level 3 Final SLA Breach, UpdateErr:`, updateRes.error);
-
-        await supabaseService.from('status_history').insert({
-          incident_id: inc.id,
-          old_status: inc.status,
-          new_status: 'ESCALATED',
-          remarks: 'FINAL SLA BREACH: Incident has exceeded Executive Level 3 resolution timeframe. No higher authority level available.'
-        });
-
-        count++;
+      if (rpcErr) {
+        console.warn(`[SLA_BREACH] RPC error for incident ${inc.id}:`, rpcErr.message);
         continue;
       }
 
-      // Normal Escalation: Level 1 -> Level 2 (24h) or Level 2 -> Level 3 (12h)
-      const toLevel = Math.min(3, fromLevel + 1);
-      const freshHours = toLevel === 2 ? 24 : 12;
-      const freshSlaDeadline = new Date(Date.now() + freshHours * 60 * 60 * 1000).toISOString();
+      const result = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult;
+      if (!result || !result.performed) {
+        // No-op: already escalated by another worker, or condition no longer met
+        continue;
+      }
 
-      const updateRes = await supabaseService
-        .from('incidents')
-        .update({
-          status: 'ESCALATED',
-          current_level: toLevel,
-          sla_deadline: freshSlaDeadline,
-          updated_at: nowIso
-        })
-        .eq('id', inc.id);
+      console.log(`[SLA_BREACH] Incident ${inc.id}: ${result.terminal_breach ? 'Terminal L3 breach' : `Level ${result.from_level} → Level ${result.to_level}`}`);
 
-      console.log(`[DAEMON ESCALATED] Incident ${inc.id}: Level ${fromLevel} -> Level ${toLevel}, UpdateErr:`, updateRes.error);
-
-      await supabaseService.from('escalations').insert({
-        incident_id: inc.id,
-        from_level: fromLevel,
-        to_level: toLevel,
-        reason: `Automated SLA breach escalation. Level ${fromLevel} SLA expired on ${new Date(inc.sla_deadline).toLocaleString()}`,
-        status: 'SLA_BREACHED'
-      });
-
-      await supabaseService.from('status_history').insert({
-        incident_id: inc.id,
-        old_status: inc.status,
-        new_status: 'SLA_BREACHED',
-        remarks: `SLA deadline breached. Automatically escalated to Level ${toLevel} with fresh ${freshHours}h SLA.`
-      });
-
+      // Notify target officers
+      const targetLevel = result.terminal_breach ? 3 : result.to_level;
       const { data: targetOfficers } = await supabaseService
         .from('officers')
         .select('profile_id')
-        .eq('level', toLevel);
+        .eq('level', targetLevel);
 
       if (targetOfficers && targetOfficers.length > 0) {
         const notifs = targetOfficers.map((off) => ({
           user_id: off.profile_id,
-          title: `SLA Breach — Level ${toLevel} Escalation`,
-          message: `Incident #${inc.id.substring(0, 8).toUpperCase()} (${inc.category}) breached Level ${fromLevel} SLA and requires Level ${toLevel} intervention.`
+          title: result.terminal_breach
+            ? 'FINAL SLA BREACH — Executive Alert'
+            : `SLA Breach — Level ${targetLevel} Escalation`,
+          message: result.terminal_breach
+            ? `Incident #${inc.id.substring(0, 8).toUpperCase()} (${inc.category}) has reached FINAL SLA BREACH at Level 3. Requires immediate senior administrative attention.`
+            : `Incident #${inc.id.substring(0, 8).toUpperCase()} (${inc.category}) breached Level ${result.from_level} SLA and requires Level ${targetLevel} intervention.`
         }));
         await supabaseService.from('notifications').insert(notifs);
       }
@@ -584,134 +576,71 @@ async function simulateSlaBreach({ user, incidentId }) {
   }
 
   const fromLevel = incident.current_level || 1;
-  const nowIso = new Date().toISOString();
+  // Use a backdated effective time 1 second before the current SLA deadline to force the breach condition
+  // This allows the DB RPC to confirm the SLA has expired while remaining idempotent
+  const effectiveNow = incident.sla_deadline
+    ? new Date(new Date(incident.sla_deadline).getTime() + 1000).toISOString()
+    : simulationClockService.getEffectiveIso();
 
-  // Case 1: Level 3 already reached -> Simulate FINAL SLA BREACH (Caps at Level 3, no Level 4)
-  if (fromLevel >= 3) {
-    // Check if Final SLA Breach has already been logged in status_history
-    const { data: existingBreach } = await supabaseService
-      .from('status_history')
-      .select('id')
-      .eq('incident_id', incident.id)
-      .ilike('remarks', '%FINAL SLA BREACH%')
-      .limit(1);
+  const reason = `Demo SLA breach simulation. Level ${fromLevel} SLA deadline forcibly triggered for demonstration.`;
 
-    if (existingBreach && existingBreach.length > 0) {
-      throw ApiError.unprocessable(
-        'FINAL_BREACH_ALREADY_REACHED',
-        'Incident has already reached Final SLA Breach at Level 3. No higher authority level exists.'
-      );
+  // Use the atomic DB RPC — same path as the scheduler, ensuring idempotency
+  const { data: rpcResult, error: rpcErr } = await supabaseService.rpc(
+    'process_incident_escalation',
+    {
+      p_incident_id: incidentId,
+      p_reason: reason,
+      p_expected_level: fromLevel,
+      p_expected_sla_deadline: incident.sla_deadline,
+      p_effective_now: effectiveNow,
+      p_actor_id: null,
+      p_source: 'scheduler'
     }
+  );
 
-    const { error: updateErr } = await supabaseService
-      .from('incidents')
-      .update({
-        status: 'ESCALATED',
-        current_level: 3,
-        updated_at: nowIso
-      })
-      .eq('id', incident.id);
+  if (rpcErr) {
+    throw ApiError.internal('ESCALATION_FAILED', `Demo SLA breach simulation failed: ${rpcErr.message}`);
+  }
 
-    if (updateErr) {
-      throw ApiError.internal('DB_UPDATE_FAILED', updateErr.message);
-    }
+  const result = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult;
 
-    await supabaseService.from('status_history').insert({
-      incident_id: incident.id,
-      old_status: incident.status,
-      new_status: 'ESCALATED',
-      changed_by: user.id,
-      remarks: 'FINAL SLA BREACH: Incident has exceeded Executive Level 3 resolution timeframe. No higher authority level available.'
-    });
-
-    // Notify Commissioner (Level 3) & Administrators
-    const { data: execOfficers } = await supabaseService
-      .from('officers')
-      .select('profile_id')
-      .eq('level', 3);
-
-    if (execOfficers && execOfficers.length > 0) {
-      const notifs = execOfficers.map((off) => ({
-        user_id: off.profile_id,
-        title: 'FINAL SLA BREACH — Executive Alert',
-        message: `Incident #${incident.id.substring(0, 8).toUpperCase()} (${incident.category}) has reached FINAL SLA BREACH at Level 3.`
-      }));
-      await supabaseService.from('notifications').insert(notifs);
-    }
-
-    const { data: updatedInc } = await supabaseService
+  if (!result || !result.performed) {
+    // Incident may have already been escalated since the fetch
+    const { data: currentInc } = await supabaseService
       .from('incidents')
       .select('*, departments(id, name, code), zones(id, name, code)')
-      .eq('id', incident.id)
+      .eq('id', incidentId)
       .single();
 
+    const alreadyBreached = currentInc?.status === 'SLA_BREACHED';
     return {
-      incident: updatedInc,
+      incident: currentInc,
       escalation: null,
-      from_level: 3,
-      to_level: 3,
-      is_final_breach: true,
-      fresh_sla_deadline: incident.sla_deadline,
-      message: 'Final SLA Breach triggered. Incident remains at Level 3 with status ESCALATED and logged in audit history.'
+      from_level: fromLevel,
+      to_level: currentInc?.current_level || fromLevel,
+      is_final_breach: alreadyBreached,
+      message: alreadyBreached
+        ? 'Incident already at final SLA breach. No further escalation possible.'
+        : 'No escalation performed — incident state may have already advanced.'
     };
   }
 
-  // Case 2: Level 1 -> Level 2 (24h fresh SLA) OR Level 2 -> Level 3 (12h fresh SLA)
-  const toLevel = fromLevel + 1;
-  const freshHours = toLevel === 2 ? 24 : 12;
-  const freshSlaDeadline = new Date(Date.now() + freshHours * 60 * 60 * 1000).toISOString();
-
-  const { error: updateErr } = await supabaseService
-    .from('incidents')
-    .update({
-      status: 'ESCALATED',
-      current_level: toLevel,
-      sla_deadline: freshSlaDeadline,
-      updated_at: nowIso
-    })
-    .eq('id', incident.id);
-
-  if (updateErr) {
-    throw ApiError.internal('DB_UPDATE_FAILED', updateErr.message);
-  }
-
-  // Genuine escalation audit record in public.escalations
-  const { data: escalationRow, error: escErr } = await supabaseService
-    .from('escalations')
-    .insert({
-      incident_id: incident.id,
-      from_level: fromLevel,
-      to_level: toLevel,
-      reason: `Simulated SLA breach escalation. Level ${fromLevel} SLA breached; escalated to Level ${toLevel} with fresh ${freshHours}h SLA.`,
-      status: 'TRIGGERED'
-    })
-    .select('*')
-    .single();
-
-  if (escErr) {
-    console.error('[ESCALATION INSERT ERROR]', escErr);
-  }
-
-  // Status history audit record in public.status_history
-  await supabaseService.from('status_history').insert({
-    incident_id: incident.id,
-    old_status: incident.status,
-    new_status: 'ESCALATED',
-    changed_by: user.id,
-    remarks: `SLA deadline breached. Automatically escalated from Level ${fromLevel} to Level ${toLevel} with fresh ${freshHours}h SLA.`
-  });
-
-  // Realtime notification to officers of toLevel
+  // Notify target officers after successful escalation
+  const targetLevel = result.terminal_breach ? 3 : result.to_level;
   const { data: targetOfficers } = await supabaseService
     .from('officers')
     .select('profile_id')
-    .eq('level', toLevel);
+    .eq('level', targetLevel);
 
   if (targetOfficers && targetOfficers.length > 0) {
     const notifs = targetOfficers.map((off) => ({
       user_id: off.profile_id,
-      title: `SLA Breach — Level ${toLevel} Escalation`,
-      message: `Incident #${incident.id.substring(0, 8).toUpperCase()} (${incident.category}) breached Level ${fromLevel} SLA and requires Level ${toLevel} intervention.`
+      title: result.terminal_breach
+        ? 'FINAL SLA BREACH — Executive Alert'
+        : `SLA Breach — Level ${targetLevel} Escalation`,
+      message: result.terminal_breach
+        ? `Incident #${incidentId.substring(0, 8).toUpperCase()} (${incident.category}) has reached FINAL SLA BREACH at Level 3.`
+        : `Incident #${incidentId.substring(0, 8).toUpperCase()} (${incident.category}) breached Level ${result.from_level} SLA and requires Level ${targetLevel} intervention.`
     }));
     await supabaseService.from('notifications').insert(notifs);
   }
@@ -719,17 +648,19 @@ async function simulateSlaBreach({ user, incidentId }) {
   const { data: updatedInc } = await supabaseService
     .from('incidents')
     .select('*, departments(id, name, code), zones(id, name, code)')
-    .eq('id', incident.id)
+    .eq('id', incidentId)
     .single();
 
   return {
     incident: updatedInc,
-    escalation: escalationRow,
-    from_level: fromLevel,
-    to_level: toLevel,
-    is_final_breach: false,
-    fresh_sla_deadline: freshSlaDeadline,
-    message: `Escalated from Level ${fromLevel} to Level ${toLevel} with fresh ${freshHours}h SLA.`
+    escalation: result.escalation_id ? { id: result.escalation_id } : null,
+    from_level: result.from_level,
+    to_level: result.to_level,
+    is_final_breach: result.terminal_breach || false,
+    fresh_sla_deadline: result.sla_deadline,
+    message: result.terminal_breach
+      ? 'Final SLA Breach triggered at Level 3. Terminal breach recorded once in audit history.'
+      : `Escalated from Level ${result.from_level} to Level ${result.to_level}. Fresh SLA deadline set from database policy.`
   };
 }
 

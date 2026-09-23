@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, AlertTriangle, CheckCircle, ShieldAlert } from 'lucide-react';
+import { useDemoClock } from '../context/DemoClockContext';
 
 const SlaTimer = ({ deadline, status }) => {
+  const { getEffectiveNow, isDemoClockActive, effectiveNow } = useDemoClock();
   const [timeRemaining, setTimeRemaining] = useState('');
   const [urgency, setUrgency] = useState('NORMAL'); // NORMAL, AT_RISK, BREACHED
 
@@ -14,7 +16,7 @@ const SlaTimer = ({ deadline, status }) => {
 
     const calculateTime = () => {
       const target = new Date(deadline).getTime();
-      const now = new Date().getTime();
+      const now = getEffectiveNow();
       const diff = target - now;
 
       if (diff <= 0) {
@@ -43,9 +45,11 @@ const SlaTimer = ({ deadline, status }) => {
     };
 
     calculateTime();
-    const interval = setInterval(calculateTime, 30000);
+    // In accelerated demo mode, tick every second; otherwise every 10 seconds
+    const intervalMs = isDemoClockActive ? 1000 : 10000;
+    const interval = setInterval(calculateTime, intervalMs);
     return () => clearInterval(interval);
-  }, [deadline, status]);
+  }, [deadline, status, getEffectiveNow, isDemoClockActive, effectiveNow]);
 
   if (status === 'RESOLVED' || status === 'CLOSED') {
     return (
@@ -60,7 +64,7 @@ const SlaTimer = ({ deadline, status }) => {
     return (
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-extrabold bg-[#F7DFDE] text-[#A83F38] border border-[#EFC4C1]">
         <ShieldAlert className="w-3.5 h-3.5" />
-        <span>BREACHED • {timeRemaining}</span>
+        <span>SLA MISSED • {timeRemaining}</span>
       </span>
     );
   }
@@ -69,7 +73,7 @@ const SlaTimer = ({ deadline, status }) => {
     return (
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-extrabold bg-[#F9E8D2] text-[#A66A22] border border-[#F2D1A8]">
         <AlertTriangle className="w-3.5 h-3.5 animate-pulse" />
-        <span>AT RISK • {timeRemaining}</span>
+        <span>DEADLINE APPROACHING • {timeRemaining}</span>
       </span>
     );
   }

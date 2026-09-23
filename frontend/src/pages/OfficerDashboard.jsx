@@ -727,7 +727,7 @@ const OfficerDashboard = () => {
 
                     {/* Primary Button */}
                     <Link
-                      to={`/incidents/${inc.id}`}
+                      to={`/officer/incidents/${inc.id}`}
                       className="px-4 py-2.5 rounded-xl bg-[#349670] hover:bg-[#2B8260] text-white font-extrabold text-xs shadow-2xs transition-all flex items-center gap-1.5 shrink-0 group-hover:scale-[1.02]"
                     >
                       <span>Open Incident</span>

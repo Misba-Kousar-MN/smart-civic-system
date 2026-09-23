@@ -7,9 +7,7 @@ const {
   determineSeverity,
   calculatePriorityScore,
   calculateSlaDeadline,
-  resolveDepartmentCode,
-  haversineDistanceMeters,
-  parseLocationPoint
+  resolveDepartmentCode
 } = require('./intelligenceService');
 
 /**
@@ -235,36 +233,39 @@ function areCategoriesCompatible(cat1, cat2) {
   return false;
 }
 
-  // 5. Spatial Deduplication Check (~50m radius) against open incidents with compatible category
+  // 5. Spatial Deduplication via PostGIS st_dwithin_incidents RPC (~50m radius)
+  // This is DB-side, concurrency-safe, and avoids loading all incidents into memory.
   const radiusMeters = env.SPATIAL_DEDUPLICATION_RADIUS_METERS || 50;
 
   let linkedIncident = null;
   let isNew = false;
 
-  // Query open active incidents
   try {
-    const { data: openIncidents } = await supabaseService
-      .from('incidents')
-      .select('*')
-      .in('status', ['OPEN', 'IN_PROGRESS', 'REOPENED', 'ESCALATED']);
+    // DB function returns only active incidents within radius, ordered by distance ASC
+    const { data: nearbyIncidents, error: spatialErr } = await supabaseService.rpc(
+      'st_dwithin_incidents',
+      {
+        p_longitude: longitude,
+        p_latitude: latitude,
+        p_radius_meters: radiusMeters
+      }
+    );
 
-    if (openIncidents && openIncidents.length > 0) {
-      for (const inc of openIncidents) {
+    if (spatialErr) {
+      console.warn('[DEDUPLICATION] PostGIS RPC error, falling back to no-merge:', spatialErr.message);
+    } else if (nearbyIncidents && nearbyIncidents.length > 0) {
+      // Check category compatibility on the small returned set
+      for (const inc of nearbyIncidents) {
         if (areCategoriesCompatible(inc.category, resolvedCategory)) {
-          const pt = parseLocationPoint(inc.location);
-          if (pt) {
-            const dist = haversineDistanceMeters(latitude, longitude, pt.latitude, pt.longitude);
-            if (dist <= radiusMeters) {
-              linkedIncident = inc;
-              break;
-            }
-          }
+          linkedIncident = inc;
+          break;
         }
       }
     }
   } catch (dedupErr) {
     console.warn('[DEDUPLICATION] Spatial check warning:', dedupErr.message);
   }
+
 
   if (linkedIncident) {
     // LINK TO EXISTING INCIDENT

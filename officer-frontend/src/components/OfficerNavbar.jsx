@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Search, LogOut, User, Shield, Bell } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import RoleLevelSelector from './RoleLevelSelector';
 
 const ROLE_LABELS = {
   ward_officer: 'Ward Officer • Level 1',
@@ -57,9 +58,9 @@ const OfficerNavbar = () => {
         </form>
       </div>
 
-      {/* Center/Right Status & User Profile */}
+      {/* Center/Right Status, Role/Level Selector & Controls */}
       {user ? (
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2.5 sm:gap-3">
           {/* System Online Badge */}
           <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#D5EFE1] border border-[#B8E0CB] text-[#216D51] text-xs font-bold">
             <span className="w-2 h-2 rounded-full bg-[#349670] animate-pulse" />
@@ -76,28 +77,22 @@ const OfficerNavbar = () => {
             <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#349670] ring-2 ring-[#E6F4ED]" />
           </Link>
 
-          {/* User Profile Badge */}
+          {/* Compact Modern Role/Level View Selector */}
+          <RoleLevelSelector />
+
+          {/* Compact Profile Avatar Button */}
           <Link
             to="/officer/profile"
-            className="flex items-center gap-2.5 p-1 pr-3 rounded-full border border-[#B8E0CB] hover:border-[#349670] bg-[#DCF0E6] hover:bg-[#CEEADA] transition-all shadow-2xs"
+            className="w-9 h-9 rounded-xl border border-[#B8E0CB] bg-[#DCF0E6] hover:bg-[#CEEADA] flex items-center justify-center font-black text-xs text-[#1F5443] transition-all shadow-2xs"
+            title={`Logged in as ${user.full_name || 'Officer'} (${user.role})`}
           >
-            <div className="w-8 h-8 rounded-full bg-[#349670] text-white flex items-center justify-center font-bold text-xs shadow-xs">
-              {user.full_name ? user.full_name.charAt(0).toUpperCase() : <User className="w-4 h-4" />}
-            </div>
-            <div className="hidden sm:block text-left pr-1">
-              <div className="text-xs font-bold text-[#174437] leading-tight">
-                {user.full_name || user.email?.split('@')[0] || 'Municipal Officer'}
-              </div>
-              <div className="text-[10px] text-[#4A7365] font-semibold">
-                {ROLE_LABELS[user.role] || user.role || 'Ward Officer • Level 1'}
-              </div>
-            </div>
+            {user.full_name ? user.full_name.charAt(0).toUpperCase() : <User className="w-4 h-4 text-[#349670]" />}
           </Link>
 
           {/* Logout */}
           <button
             onClick={handleLogout}
-            className="w-9 h-9 rounded-xl border border-[#B8E0CB] text-[#4A7365] hover:text-rose-700 hover:bg-rose-50 hover:border-rose-200 flex items-center justify-center transition-all"
+            className="w-9 h-9 rounded-xl border border-[#B8E0CB] text-[#4A7365] hover:text-rose-700 hover:bg-rose-50 hover:border-rose-200 flex items-center justify-center transition-all cursor-pointer"
             title="Sign Out"
           >
             <LogOut className="w-4 h-4" />

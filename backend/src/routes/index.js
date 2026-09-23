@@ -7,12 +7,14 @@ const incidentRoutes = require('./incidentRoutes');
 const notificationRoutes = require('./notificationRoutes');
 const masterDataRoutes = require('./masterDataRoutes');
 const analyticsRoutes = require('./analyticsRoutes');
+const demoRoutes = require('./demoRoutes');
 
 router.use('/profile', profileRoutes);
 router.use('/reports', reportRoutes);
 router.use('/incidents', incidentRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/analytics', analyticsRoutes);
+router.use('/demo', demoRoutes);
 
 // Master data endpoints (/zones, /departments, /sla-policies, /officers)
 router.use('/', masterDataRoutes);

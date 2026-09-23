@@ -10,17 +10,18 @@ const server = app.listen(env.PORT, () => {
   console.log(`  Listening on: http://localhost:${env.PORT}/api/v1`);
   console.log(`============================================================`);
 
-  // Automatic SLA Breach Audit Timer — runs every 30 seconds
+  // Automatic SLA Breach Audit Timer — runs every 3 seconds in demo/development, 30s in production
+  const auditIntervalMs = env.NODE_ENV === 'production' ? 30000 : 3000;
   setInterval(async () => {
     try {
       const res = await incidentService.checkAndEscalateSlaBreaches();
       if (res.escalated_count > 0) {
-        console.log(`[SLA_AUDIT] Automatically escalated ${res.escalated_count} SLA-breached incidents to higher officer levels.`);
+        console.log(`[SLA_AUDIT] Automatically escalated ${res.escalated_count} SLA-breached incidents to higher responsibility levels.`);
       }
     } catch (err) {
       console.warn('[SLA_AUDIT] Background audit error:', err.message);
     }
-  }, 30000);
+  }, auditIntervalMs);
 });
 
 // Handle unhandled promise rejections

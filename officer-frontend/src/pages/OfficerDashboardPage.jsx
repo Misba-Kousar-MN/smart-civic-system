@@ -28,12 +28,16 @@ import SlaTimer from '../components/SlaTimer';
 import InteractiveMap from '../components/InteractiveMap';
 import AssignTeamModal from '../components/AssignTeamModal';
 import ResolutionModal from '../components/ResolutionModal';
+import DemoClockControl from '../components/DemoClockControl';
 import { parseCoordinates } from '../utils/locationUtils';
 import { useAuth } from '../context/AuthContext';
 import { useRealtime } from '../context/RealtimeContext';
+import { useAuthorityView, AUTHORITY_TIERS } from '../context/AuthorityViewContext';
+import { getResponsibilityForIncident } from '../config/responsibilityMatrix';
 
 const OfficerDashboardPage = () => {
   const { user } = useAuth();
+  const { selectedView, setSelectedView, currentTierInfo } = useAuthorityView();
   const { lastEvent } = useRealtime();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -52,7 +56,7 @@ const OfficerDashboardPage = () => {
 
   const tabFromUrl = searchParams.get('tab') || 'ALL';
   const categoryFromUrl = searchParams.get('category') || 'ALL';
-  const levelFromUrl = parseInt(searchParams.get('level') || '1', 10);
+  const levelParam = searchParams.get('level');
 
   const [activeTab, setActiveTab] = useState(tabFromUrl);
   const [selectedCategory, setSelectedCategory] = useState(categoryFromUrl);
@@ -68,11 +72,19 @@ const OfficerDashboardPage = () => {
   };
 
   const [selectedAuthorityLevel, setSelectedAuthorityLevel] = useState(
-    demoMode ? Math.max(1, isNaN(levelFromUrl) ? 1 : levelFromUrl) : Math.min(userMaxLevel, Math.max(1, isNaN(levelFromUrl) ? 1 : levelFromUrl))
+    levelParam ? (levelParam === 'ALL' ? 'ALL' : parseInt(levelParam, 10)) : selectedView
   );
   const [searchQuery, setSearchQuery] = useState('');
   const [showMap, setShowMap] = useState(false);
   const [departments, setDepartments] = useState([]);
+
+  // Synchronize dashboard level with selected authority view
+  useEffect(() => {
+    if (selectedAuthorityLevel !== 'ALL' && selectedAuthorityLevel !== selectedView) {
+      setSelectedAuthorityLevel(selectedView);
+      setActiveTab('ALL');
+    }
+  }, [selectedView]);
 
   // Modals
   const [selectedIncidentForAssign, setSelectedIncidentForAssign] = useState(null);
@@ -123,9 +135,14 @@ const OfficerDashboardPage = () => {
     }
   }, [lastEvent]);
 
-  // Derived Operational Counts (100% Data-Driven)
+  // Derived Operational Counts (100% Data-Driven from Real DB Records)
+  // Level 1 Operational Counts
   const needsAssignmentCount = useMemo(() => {
     return incidents.filter(i => !i.assigned_officer_id && i.status !== 'RESOLVED' && i.status !== 'CLOSED').length;
+  }, [incidents]);
+
+  const inProgressCount = useMemo(() => {
+    return incidents.filter(i => i.status === 'IN_PROGRESS').length;
   }, [incidents]);
 
   const slaAtRiskCount = useMemo(() => {
@@ -137,12 +154,42 @@ const OfficerDashboardPage = () => {
     }).length;
   }, [incidents]);
 
-  const escalatedCount = useMemo(() => {
-    return incidents.filter(i => i.status === 'ESCALATED' || i.status === 'SLA_BREACHED' || (i.current_level && i.current_level > 1)).length;
-  }, [incidents]);
-
   const newReportsCount = useMemo(() => {
     return incidents.filter(i => i.status === 'OPEN').length;
+  }, [incidents]);
+
+  // Level 2 Supervisory Counts
+  const l2EscalationsCount = useMemo(() => {
+    return incidents.filter(i => i.current_level === 2).length;
+  }, [incidents]);
+
+  const l1BreachedCount = useMemo(() => {
+    return incidents.filter(i => (i.current_level || 1) >= 2).length;
+  }, [incidents]);
+
+  const l2CriticalCount = useMemo(() => {
+    return incidents.filter(i => (i.current_level === 2) && (i.priority_level === 'CRITICAL' || i.priority_level === 'HIGH')).length;
+  }, [incidents]);
+
+  const reopenedCount = useMemo(() => {
+    return incidents.filter(i => i.status === 'REOPENED').length;
+  }, [incidents]);
+
+  // Level 3 Executive Counts
+  const l3TotalCount = useMemo(() => {
+    return incidents.filter(i => (i.current_level || 1) >= 3).length;
+  }, [incidents]);
+
+  const finalBreachedCount = useMemo(() => {
+    return incidents.filter(i => (i.current_level || 1) >= 3 && (i.status === 'SLA_BREACHED' || (i.sla_deadline && new Date(i.sla_deadline).getTime() < Date.now() && i.status !== 'RESOLVED' && i.status !== 'CLOSED'))).length;
+  }, [incidents]);
+
+  const multiTierCount = useMemo(() => {
+    return incidents.filter(i => (i.current_level || 1) >= 3).length;
+  }, [incidents]);
+
+  const criticalEmergencyCount = useMemo(() => {
+    return incidents.filter(i => parseFloat(i.priority_score || 0) >= 75 || i.priority_level === 'CRITICAL').length;
   }, [incidents]);
 
   const activeIncidentsCount = useMemo(() => {
@@ -222,14 +269,37 @@ const OfficerDashboardPage = () => {
     });
   }, [incidents]);
 
-  // Filtered Queue
+  // Filtered Queue (Responsibility Level View Driven)
   const filteredIncidents = useMemo(() => {
     return sortedIncidents.filter(inc => {
-      // 0. Authority Level View Filter
       const incLevel = inc.current_level || 1;
-      if (selectedAuthorityLevel === 1 && incLevel !== 1) return false;
-      if (selectedAuthorityLevel === 2 && incLevel !== 2) return false;
-      if (selectedAuthorityLevel === 3 && incLevel < 3) return false;
+      const remainingMs = inc.sla_deadline ? new Date(inc.sla_deadline).getTime() - Date.now() : 999999999;
+      const isSlaRisk = remainingMs > 0 && remainingMs < 4 * 60 * 60 * 1000;
+
+      // 0. Primary Filter: Active Responsibility View
+      if (selectedView === 1) {
+        // Level 1: Operational Resolution — "What incidents do I need to handle?"
+        // Displays active frontline operational incidents queued or assigned for field resolution.
+        if (incLevel > 1) return false;
+      } else if (selectedView === 2) {
+        // Level 2: Supervisory Intervention — "Which cases need my intervention?"
+        // Normal complaints remain at Level 1; only cases requiring supervisory intervention appear here.
+        const requiresIntervention =
+          incLevel === 2 ||
+          inc.status === 'ESCALATED' ||
+          inc.status === 'SLA_BREACHED' ||
+          inc.status === 'REOPENED' ||
+          inc.status === 'PAUSED' ||
+          isSlaRisk;
+        if (!requiresIntervention) return false;
+      } else if (selectedView === 3) {
+        // Level 3: Senior Administrative Oversight — "Which cases require senior attention?"
+        // Exception and high-impact oversight view; does not duplicate routine complaints.
+        const isCriticalImpact = inc.priority_level === 'CRITICAL' || parseFloat(inc.priority_score || 0) >= 75;
+        const isTerminalBreach = inc.status === 'SLA_BREACHED';
+        const requiresSeniorOversight = incLevel >= 3 || isTerminalBreach || isCriticalImpact;
+        if (!requiresSeniorOversight) return false;
+      }
 
       // 1. Category Filter
       if (selectedCategory !== 'ALL') {
@@ -244,17 +314,33 @@ const OfficerDashboardPage = () => {
       }
 
       // 2. Status / Urgency Tab Filter
-      if (activeTab === 'NEEDS_ASSIGNMENT') {
+      if (activeTab === 'NEEDS_ASSIGNMENT' || activeTab === 'NEEDS_ACTION') {
         if (inc.assigned_officer_id || inc.status === 'RESOLVED' || inc.status === 'CLOSED') return false;
-      } else if (activeTab === 'SLA_RISK') {
-        if (inc.status === 'RESOLVED' || inc.status === 'CLOSED') return false;
-        if (!inc.sla_deadline) return false;
-        const remainingMs = new Date(inc.sla_deadline).getTime() - Date.now();
-        if (remainingMs <= 0 || remainingMs >= 4 * 60 * 60 * 1000) return false;
-      } else if (activeTab === 'ESCALATED') {
-        if (inc.status !== 'ESCALATED' && inc.status !== 'SLA_BREACHED' && (!inc.current_level || inc.current_level <= 1)) return false;
       } else if (activeTab === 'IN_PROGRESS') {
         if (inc.status !== 'IN_PROGRESS') return false;
+      } else if (activeTab === 'SLA_RISK') {
+        if (inc.status === 'RESOLVED' || inc.status === 'CLOSED' || !inc.sla_deadline) return false;
+        if (remainingMs <= 0 || remainingMs >= 4 * 60 * 60 * 1000) return false;
+      } else if (activeTab === 'NEW_REPORTS') {
+        if (inc.status !== 'OPEN') return false;
+      } else if (activeTab === 'L2_ESCALATED' || activeTab === 'SUPERVISORY_ATTENTION') {
+        if (incLevel !== 2 && inc.status !== 'ESCALATED') return false;
+      } else if (activeTab === 'L1_BREACHED' || activeTab === 'ESCALATED_CASES') {
+        if (incLevel < 2 && inc.status !== 'ESCALATED' && inc.status !== 'SLA_BREACHED') return false;
+      } else if (activeTab === 'L2_CRITICAL' || activeTab === 'HIGH_PRIORITY') {
+        if (inc.priority_level !== 'CRITICAL' && inc.priority_level !== 'HIGH') return false;
+      } else if (activeTab === 'REOPENED' || activeTab === 'RECENT_ESCALATIONS') {
+        if (inc.status !== 'REOPENED' && inc.status !== 'ESCALATED') return false;
+      } else if (activeTab === 'L3_ACTIVE' || activeTab === 'EXECUTIVE_ATTENTION') {
+        if (incLevel < 3) return false;
+      } else if (activeTab === 'FINAL_BREACH' || activeTab === 'FINAL_ESCALATIONS') {
+        const isExp = inc.sla_deadline && new Date(inc.sla_deadline).getTime() < Date.now();
+        if (inc.status !== 'SLA_BREACHED' && !isExp) return false;
+      } else if (activeTab === 'CRITICAL_RISK' || activeTab === 'CRITICAL_CASES') {
+        const score = parseFloat(inc.priority_score || 0);
+        if (score < 75 && inc.priority_level !== 'CRITICAL') return false;
+      } else if (activeTab === 'MULTI_TIER') {
+        if (incLevel < 3) return false;
       } else if (activeTab === 'RESOLVED') {
         if (inc.status !== 'RESOLVED' && inc.status !== 'CLOSED') return false;
       }
@@ -273,17 +359,21 @@ const OfficerDashboardPage = () => {
 
       return true;
     });
-  }, [sortedIncidents, activeTab, selectedCategory, selectedAuthorityLevel, searchQuery]);
+  }, [sortedIncidents, activeTab, selectedCategory, selectedView, searchQuery]);
 
   const handleLevelChange = (lvl) => {
-    if (!demoMode && lvl > userMaxLevel) {
+    if (lvl !== 'ALL' && !demoMode && Number(lvl) > userMaxLevel) {
       setError(`Role '${userRole}' is restricted to Level ${userMaxLevel} operational queue. Enable Demo Mode to view all escalation tiers.`);
       return;
     }
     setError('');
     setSelectedAuthorityLevel(lvl);
     const newParams = new URLSearchParams(searchParams);
-    newParams.set('level', lvl);
+    if (lvl === 'ALL') {
+      newParams.delete('level');
+    } else {
+      newParams.set('level', String(lvl));
+    }
     if (activeTab !== 'ALL') newParams.set('tab', activeTab);
     if (selectedCategory !== 'ALL') newParams.set('category', selectedCategory);
     setSearchParams(newParams);
@@ -315,47 +405,60 @@ const OfficerDashboardPage = () => {
 
   return (
     <div className="bg-[#F0F8F5] min-h-screen space-y-6 pb-12 select-none">
+      {/* Presentation Accelerated Demo Clock Control Bar */}
+      <DemoClockControl />
+
       {/* ---------------------------------------------------------------- */}
-      {/* 1. OFFICER COMMAND CENTER HEADER (Soft Botanical Gradient)        */}
+      {/* 1. OFFICER COMMAND CENTER HEADER (Adapts based on selectedView)  */}
       {/* ---------------------------------------------------------------- */}
       <div
-        className="rounded-2xl p-6 shadow-md border border-[#1F5443]/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 text-white"
-        style={{ background: 'linear-gradient(135deg, #1F5443, #2B7A5F)' }}
+        className="rounded-2xl p-6 shadow-md border flex flex-col md:flex-row items-start md:items-center justify-between gap-4 text-white transition-all duration-300"
+        style={{
+          background:
+            selectedView === 3
+              ? 'linear-gradient(135deg, #4A1B1B, #782D2D)'
+              : selectedView === 2
+              ? 'linear-gradient(135deg, #3B2349, #613B76)'
+              : 'linear-gradient(135deg, #1F5443, #2B7A5F)',
+          borderColor:
+            selectedView === 3
+              ? 'rgba(166, 71, 61, 0.4)'
+              : selectedView === 2
+              ? 'rgba(115, 71, 133, 0.4)'
+              : 'rgba(31, 84, 67, 0.4)'
+        }}
       >
         <div>
-          <div className="flex items-center gap-2 text-xs font-bold text-[#C8EAD9] uppercase tracking-wider mb-1">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>COMMAND CENTER</span>
+          <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider mb-1 opacity-90">
+            <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+            <span>
+              {selectedView === 1
+                ? 'LEVEL 1 • OPERATIONAL RESOLUTION'
+                : selectedView === 2
+                ? 'LEVEL 2 • SUPERVISORY INTERVENTION'
+                : 'LEVEL 3 • SENIOR ADMINISTRATIVE OVERSIGHT'}
+            </span>
           </div>
           <h1 className="text-2xl font-black tracking-tight text-white">
-            Good evening, {user?.full_name || 'City Ward Officer'}.
+            {selectedView === 1
+              ? `Good evening, ${user?.full_name || 'Operational Resolver'}.`
+              : selectedView === 2
+              ? 'Supervisory Technical Escalation Command'
+              : 'Senior Administrative Accountability Oversight'}
           </h1>
-          <p className="text-xs font-semibold text-[#E6F4ED] mt-1">
-            {activeIncidentsCount} active incidents are currently being monitored across your ward.
+          <p className="text-xs font-semibold text-white/85 mt-1">
+            {selectedView === 1
+              ? `${activeIncidentsCount} active operational field workorders are being monitored across assigned municipal services.`
+              : selectedView === 2
+              ? `${levelCounts[2] || filteredIncidents.length} incidents currently require departmental supervisory intervention.`
+              : `${levelCounts[3] || filteredIncidents.length} exceptional civic matters have reached senior administrative oversight.`}
           </p>
         </div>
 
         <div className="flex items-center gap-3 self-stretch md:self-auto justify-between md:justify-end flex-wrap">
           <button
-            onClick={toggleDemoMode}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all border shadow-xs ${
-              demoMode
-                ? 'bg-[#E09422] text-white border-[#F3DE9A] shadow-md ring-2 ring-white/40'
-                : 'bg-white/15 text-white border-white/25 hover:bg-white/25'
-            }`}
-            title="Toggle Demo Mode for 3-Level SLA Escalation Presentation"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>DEMO MODE: {demoMode ? 'ON' : 'OFF'}</span>
-          </button>
-
-          <button
             onClick={() => setShowMap(!showMap)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-extrabold transition-all border ${
-              showMap
-                ? 'bg-[#349670] text-white border-[#5EB894] shadow-sm'
-                : 'bg-white/15 text-white border-white/25 hover:bg-white/25'
-            }`}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-extrabold transition-all border bg-white/15 text-white border-white/25 hover:bg-white/25 cursor-pointer"
           >
             <MapIcon className="w-4 h-4" />
             <span>{showMap ? 'Hide Map' : 'View Map'}</span>
@@ -364,7 +467,7 @@ const OfficerDashboardPage = () => {
           <button
             onClick={fetchIncidents}
             disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-extrabold bg-white/15 text-white border border-white/25 hover:bg-white/25 transition-all disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-extrabold bg-white/15 text-white border border-white/25 hover:bg-white/25 transition-all disabled:opacity-50 cursor-pointer"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             <span>Refresh</span>
@@ -376,26 +479,6 @@ const OfficerDashboardPage = () => {
           </div>
         </div>
       </div>
-
-      {/* Demo Mode Presentation Banner */}
-      {demoMode && (
-        <div className="bg-[#FFF8E7] border border-[#F3DE9A] text-[#8C5E14] px-5 py-3.5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold shadow-xs">
-          <div className="flex items-center gap-2.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#E09422] animate-ping shrink-0" />
-            <span>
-              DEMO MODE ACTIVE • 3-Tier SLA Escalation Presentation Sandbox Enabled
-            </span>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="text-[10px] font-mono uppercase bg-[#F5E6BA] px-2.5 py-1 rounded-lg text-[#70490C]">
-              Operational Queues Unlocked (L1, L2, L3)
-            </span>
-            <span className="text-[10px] font-mono uppercase bg-[#E6F4ED] border border-[#B8E0CB] px-2.5 py-1 rounded-lg text-[#1F5443]">
-              RBAC Role Intact: {userRole}
-            </span>
-          </div>
-        </div>
-      )}
 
       {/* Optional Spatial Map View */}
       {showMap && (
@@ -412,111 +495,305 @@ const OfficerDashboardPage = () => {
       )}
 
       {/* ---------------------------------------------------------------- */}
-      {/* 2. PRIMARY ATTENTION STRIP (Soft Pastel Mint Surface)            */}
+      {/* 2. PRIMARY ATTENTION STRIP (Adapts based on selectedView)        */}
       {/* ---------------------------------------------------------------- */}
       <div className="bg-[#E6F4ED] rounded-2xl p-5 border border-[#B8E0CB] shadow-xs space-y-3">
         <div>
           <h2 className="text-xs font-black text-[#1F5443] uppercase tracking-wider flex items-center gap-2">
             <ShieldAlert className="w-4 h-4 text-[#9C621E]" />
-            <span>ATTENTION REQUIRED</span>
+            <span>
+              {selectedView === 1
+                ? 'OPERATIONAL ATTENTION REQUIRED'
+                : selectedView === 2
+                ? 'SUPERVISORY INTERVENTION REQUIRED'
+                : 'SENIOR ADMINISTRATIVE DIRECTIVE REQUIRED'}
+            </span>
           </h2>
           <p className="text-[11px] font-semibold text-[#4A7365]">
-            Items requiring immediate operational action from you.
+            {selectedView === 1
+              ? 'Unassigned or SLA-at-risk workorders requiring field action.'
+              : selectedView === 2
+              ? 'Incidents that exceeded Level 1 SLA or require supervisory decision.'
+              : 'Critical matters and terminal SLA breaches requiring senior review.'}
           </p>
         </div>
 
+        {/* 4 Adaptive Attention Pills */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {/* Pill 1: Needs Assignment */}
-          <button
-            type="button"
-            onClick={() => handleTabChange('NEEDS_ASSIGNMENT')}
-            className={`p-3.5 rounded-xl border text-left transition-all ${
-              activeTab === 'NEEDS_ASSIGNMENT'
-                ? 'bg-[#CEEADA] border-[#9C621E] ring-2 ring-[#9C621E]'
-                : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
-            }`}
-          >
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-bold text-[#174437]">Needs Assignment</span>
-              {needsAssignmentCount > 0 ? (
-                <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#9C621E] text-white">
-                  {needsAssignmentCount}
-                </span>
-              ) : (
-                <span className="text-xs font-bold text-[#216D51] flex items-center gap-1">None ✓</span>
-              )}
-            </div>
-            <p className="text-[10px] text-[#4A7365] font-medium truncate">Unassigned workorders</p>
-          </button>
+          {selectedView === 1 ? (
+            // LEVEL 1 (OPERATIONAL RESOLUTION) PILLS
+            <>
+              <button
+                type="button"
+                onClick={() => handleTabChange('NEEDS_ACTION')}
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  activeTab === 'NEEDS_ACTION' || activeTab === 'NEEDS_ASSIGNMENT'
+                    ? 'bg-[#CEEADA] border-[#9C621E] ring-2 ring-[#9C621E]'
+                    : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-[#174437]">Needs Action</span>
+                  {needsAssignmentCount > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#9C621E] text-white">
+                      {needsAssignmentCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-[#216D51]">None ✓</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[#4A7365] font-medium truncate">Unassigned workorders</p>
+              </button>
 
-          {/* Pill 2: SLA At Risk */}
-          <button
-            type="button"
-            onClick={() => handleTabChange('SLA_RISK')}
-            className={`p-3.5 rounded-xl border text-left transition-all ${
-              activeTab === 'SLA_RISK'
-                ? 'bg-[#CEEADA] border-[#A6473D] ring-2 ring-[#A6473D]'
-                : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
-            }`}
-          >
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-bold text-[#174437]">SLA At Risk</span>
-              {slaAtRiskCount > 0 ? (
-                <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#A6473D] text-white">
-                  {slaAtRiskCount}
-                </span>
-              ) : (
-                <span className="text-xs font-bold text-[#216D51] flex items-center gap-1">None ✓</span>
-              )}
-            </div>
-            <p className="text-[10px] text-[#4A7365] font-medium truncate">Expiring within 4 hours</p>
-          </button>
+              <button
+                type="button"
+                onClick={() => handleTabChange('IN_PROGRESS')}
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  activeTab === 'IN_PROGRESS'
+                    ? 'bg-[#CEEADA] border-[#326F9C] ring-2 ring-[#326F9C]'
+                    : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-[#174437]">Active Field Work</span>
+                  {inProgressCount > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#326F9C] text-white">
+                      {inProgressCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-[#216D51]">None ✓</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[#4A7365] font-medium truncate">In progress on ground</p>
+              </button>
 
-          {/* Pill 3: Escalated */}
-          <button
-            type="button"
-            onClick={() => handleTabChange('ESCALATED')}
-            className={`p-3.5 rounded-xl border text-left transition-all ${
-              activeTab === 'ESCALATED'
-                ? 'bg-[#CEEADA] border-[#734785] ring-2 ring-[#734785]'
-                : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
-            }`}
-          >
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-bold text-[#174437]">Escalated</span>
-              {escalatedCount > 0 ? (
-                <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#734785] text-white">
-                  {escalatedCount}
-                </span>
-              ) : (
-                <span className="text-xs font-bold text-[#216D51] flex items-center gap-1">None ✓</span>
-              )}
-            </div>
-            <p className="text-[10px] text-[#4A7365] font-medium truncate">Advanced to AEE/Comm.</p>
-          </button>
+              <button
+                type="button"
+                onClick={() => handleTabChange('NEW_REPORTS')}
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  activeTab === 'NEW_REPORTS'
+                    ? 'bg-[#CEEADA] border-[#349670] ring-2 ring-[#349670]'
+                    : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-[#174437]">New Reports</span>
+                  {newReportsCount > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#349670] text-white">
+                      {newReportsCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-[#216D51]">None ✓</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[#4A7365] font-medium truncate">Fresh citizen submissions</p>
+              </button>
 
-          {/* Pill 4: New Reports */}
-          <button
-            type="button"
-            onClick={() => handleTabChange('ALL')}
-            className={`p-3.5 rounded-xl border text-left transition-all ${
-              activeTab === 'ALL'
-                ? 'bg-[#CEEADA] border-[#349670] ring-2 ring-[#349670]'
-                : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
-            }`}
-          >
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-bold text-[#174437]">New Reports</span>
-              {newReportsCount > 0 ? (
-                <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#349670] text-white">
-                  {newReportsCount}
-                </span>
-              ) : (
-                <span className="text-xs font-bold text-[#216D51] flex items-center gap-1">None ✓</span>
-              )}
-            </div>
-            <p className="text-[10px] text-[#4A7365] font-medium truncate">Fresh citizen submissions</p>
-          </button>
+              <button
+                type="button"
+                onClick={() => handleTabChange('SLA_RISK')}
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  activeTab === 'SLA_RISK'
+                    ? 'bg-[#CEEADA] border-[#A6473D] ring-2 ring-[#A6473D]'
+                    : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-[#174437]">SLA Approaching</span>
+                  {slaAtRiskCount > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#A6473D] text-white">
+                      {slaAtRiskCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-[#216D51]">None ✓</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[#4A7365] font-medium truncate">Expiring &lt; 4 hours</p>
+              </button>
+            </>
+          ) : selectedView === 2 ? (
+            // LEVEL 2 (SUPERVISORY INTERVENTION) PILLS
+            <>
+              <button
+                type="button"
+                onClick={() => handleTabChange('SUPERVISORY_ATTENTION')}
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  activeTab === 'SUPERVISORY_ATTENTION' || activeTab === 'L2_ESCALATED'
+                    ? 'bg-[#EFE3F5] border-[#734785] ring-2 ring-[#734785]'
+                    : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-[#734785]">Supervisory Attention</span>
+                  {l2EscalationsCount > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#734785] text-white">
+                      {l2EscalationsCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-[#216D51]">Clear ✓</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[#553363] font-medium truncate">Active at Level 2</p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTabChange('ESCALATED_CASES')}
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  activeTab === 'ESCALATED_CASES' || activeTab === 'L1_BREACHED'
+                    ? 'bg-[#EFE3F5] border-[#9C621E] ring-2 ring-[#9C621E]'
+                    : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-[#174437]">Escalated Cases</span>
+                  {l1BreachedCount > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#9C621E] text-white">
+                      {l1BreachedCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-[#216D51]">None ✓</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[#4A7365] font-medium truncate">Exceeded frontline SLA</p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTabChange('SLA_RISK')}
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  activeTab === 'SLA_RISK'
+                    ? 'bg-[#EFE3F5] border-[#A6473D] ring-2 ring-[#A6473D]'
+                    : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-[#174437]">SLA Risks</span>
+                  {slaAtRiskCount > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#A6473D] text-white">
+                      {slaAtRiskCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-[#216D51]">None ✓</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[#4A7365] font-medium truncate">Expiring &lt; 4 hours</p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTabChange('RECENT_ESCALATIONS')}
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  activeTab === 'RECENT_ESCALATIONS' || activeTab === 'REOPENED'
+                    ? 'bg-[#EFE3F5] border-[#734785] ring-2 ring-[#734785]'
+                    : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-[#174437]">Recent Escalations</span>
+                  {reopenedCount > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#734785] text-white">
+                      {reopenedCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-[#216D51]">None ✓</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[#4A7365] font-medium truncate">Reopened / QA review</p>
+              </button>
+            </>
+          ) : (
+            // LEVEL 3 (SENIOR ADMINISTRATIVE OVERSIGHT) PILLS
+            <>
+              <button
+                type="button"
+                onClick={() => handleTabChange('EXECUTIVE_ATTENTION')}
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  activeTab === 'EXECUTIVE_ATTENTION' || activeTab === 'L3_ACTIVE'
+                    ? 'bg-[#FAECEB] border-[#A6473D] ring-2 ring-[#A6473D]'
+                    : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-[#A6473D]">Senior Attention</span>
+                  {l3TotalCount > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#A6473D] text-white">
+                      {l3TotalCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-[#216D51]">Clear ✓</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[#7A2A22] font-medium truncate">Senior administrative oversight</p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTabChange('FINAL_ESCALATIONS')}
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  activeTab === 'FINAL_ESCALATIONS' || activeTab === 'FINAL_BREACH'
+                    ? 'bg-[#FAECEB] border-[#A6473D] ring-2 ring-[#A6473D]'
+                    : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-[#A6473D]">Final Escalations</span>
+                  {finalBreachedCount > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#A6473D] text-white animate-pulse">
+                      {finalBreachedCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-[#216D51]">None ✓</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[#7A2A22] font-medium truncate">Terminal tier (No L4)</p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTabChange('CRITICAL_CASES')}
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  activeTab === 'CRITICAL_CASES' || activeTab === 'CRITICAL_RISK'
+                    ? 'bg-[#FAECEB] border-[#9C621E] ring-2 ring-[#9C621E]'
+                    : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-[#174437]">Critical Cases</span>
+                  {criticalEmergencyCount > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#9C621E] text-white">
+                      {criticalEmergencyCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-[#216D51]">None ✓</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[#4A7365] font-medium truncate">Score &ge; 75 civic impact</p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTabChange('SLA_RISK')}
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  activeTab === 'SLA_RISK'
+                    ? 'bg-[#FAECEB] border-[#A6473D] ring-2 ring-[#A6473D]'
+                    : 'bg-[#DCF0E6] hover:bg-[#CEEADA] border-[#B8E0CB]'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-[#A6473D]">SLA Breaches</span>
+                  {slaAtRiskCount + finalBreachedCount > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-[#A6473D] text-white">
+                      {slaAtRiskCount + finalBreachedCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-[#216D51]">None ✓</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[#7A2A22] font-medium truncate">Overdue escalated cases</p>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -524,64 +801,22 @@ const OfficerDashboardPage = () => {
       {/* 3. PRIORITIZED INCIDENT WORK QUEUE                               */}
       {/* ---------------------------------------------------------------- */}
       <div className="bg-[#E6F4ED] rounded-2xl border border-[#B8E0CB] shadow-xs overflow-hidden">
-        {/* Authority Level Switcher Strip */}
-        <div className="px-5 py-3.5 bg-[#D5EFE1] border-b border-[#B8E0CB] flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] font-black text-[#1F5443] uppercase tracking-wider flex items-center gap-1.5 shrink-0">
-              <Layers className="w-4 h-4 text-[#349670]" />
-              <span>Operational Authority View:</span>
-            </span>
-            <div className="flex items-center gap-1.5 p-1 bg-[#CEEADA] border border-[#B8E0CB] rounded-xl text-xs font-black overflow-x-auto">
-              {[
-                { lvl: 1, label: 'LEVEL 1 • WARD', subtitle: 'Ward Officer' },
-                { lvl: 2, label: 'LEVEL 2 • AEE', subtitle: 'Senior Tech' },
-                { lvl: 3, label: 'LEVEL 3 • COMMISSIONER', subtitle: 'Executive' }
-              ].map(item => {
-                const isLocked = !demoMode && item.lvl > userMaxLevel;
-                const isSelected = selectedAuthorityLevel === item.lvl;
-                return (
-                  <button
-                    key={item.lvl}
-                    type="button"
-                    onClick={() => handleLevelChange(item.lvl)}
-                    className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
-                      isSelected
-                        ? 'bg-[#1F5443] text-white shadow-xs font-extrabold'
-                        : isLocked
-                        ? 'opacity-40 text-[#4A7365] bg-transparent cursor-not-allowed'
-                        : 'text-[#174437] hover:bg-[#B8E0CB]/50 font-bold'
-                    }`}
-                    title={isLocked ? `Role '${userRole}' cannot access Level ${item.lvl}. Turn on Demo Mode to inspect.` : item.label}
-                  >
-                    <span>{item.label}</span>
-                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${isSelected ? 'bg-white/20 text-white' : 'bg-[#B8E0CB] text-[#1F5443]'}`}>
-                      {levelCounts[item.lvl] || 0}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="text-[11px] font-bold text-[#4A7365] flex items-center gap-1.5 shrink-0">
-            <ShieldAlert className="w-3.5 h-3.5 text-[#9C621E]" />
-            <span>Role: <strong className="text-[#1F5443] uppercase">{userRole.replace('_', ' ')}</strong></span>
-          </div>
-        </div>
-
         {/* Queue Header & Filters */}
         <div className="p-5 border-b border-[#B8E0CB] bg-[#DCF0E6] flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h2 className="text-base font-black text-[#1F5443] tracking-tight flex items-center gap-2">
-              <span>INCIDENT WORK QUEUE</span>
-              {selectedAuthorityLevel > 1 && (
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-[#9C621E] text-white uppercase">
-                  Level {selectedAuthorityLevel} Oversight
-                </span>
-              )}
+            <h2 className="text-base font-black text-[#1F5443] tracking-tight">
+              {selectedView === 1
+                ? 'OPERATIONAL QUEUE'
+                : selectedView === 2
+                ? 'SUPERVISORY INTERVENTION QUEUE'
+                : 'SENIOR OVERSIGHT QUEUE'}
             </h2>
             <p className="text-xs font-semibold text-[#4A7365]">
-              Prioritized incidents requiring Level {selectedAuthorityLevel} municipal action ({filteredIncidents.length} items visible).
+              {selectedView === 1
+                ? `${filteredIncidents.length} active workorders`
+                : selectedView === 2
+                ? `${filteredIncidents.length} requiring intervention`
+                : `${filteredIncidents.length} requiring senior attention`}
             </p>
           </div>
 
@@ -598,20 +833,39 @@ const OfficerDashboardPage = () => {
               />
             </div>
 
-            {/* Segmented Control Filters */}
+            {/* Segmented Control Filters (Adaptive by Selected View) */}
             <div className="flex items-center gap-1 p-1 bg-[#CEEADA] border border-[#B8E0CB] rounded-xl text-[11px] font-bold overflow-x-auto">
-              {[
-                { key: 'ALL', label: 'All' },
-                { key: 'NEEDS_ASSIGNMENT', label: 'Needs Assignment' },
-                { key: 'SLA_RISK', label: 'SLA Risk' },
-                { key: 'ESCALATED', label: 'Escalated' },
-                { key: 'IN_PROGRESS', label: 'In Progress' },
-                { key: 'RESOLVED', label: 'Resolved' }
-              ].map(tab => (
+              {(selectedView === 1
+                ? [
+                    { key: 'ALL', label: 'All' },
+                    { key: 'NEEDS_ACTION', label: 'Needs Action' },
+                    { key: 'IN_PROGRESS', label: 'Active Field Work' },
+                    { key: 'NEW_REPORTS', label: 'New Reports' },
+                    { key: 'SLA_RISK', label: 'SLA Approaching' },
+                    { key: 'RESOLVED', label: 'Resolved' }
+                  ]
+                : selectedView === 2
+                ? [
+                    { key: 'ALL', label: 'All' },
+                    { key: 'SUPERVISORY_ATTENTION', label: 'Supervisory Attention' },
+                    { key: 'ESCALATED_CASES', label: 'Escalated Cases' },
+                    { key: 'HIGH_PRIORITY', label: 'High Priority' },
+                    { key: 'RECENT_ESCALATIONS', label: 'Recent Escalations' },
+                    { key: 'RESOLVED', label: 'Resolved' }
+                  ]
+                : [
+                    { key: 'ALL', label: 'All' },
+                    { key: 'EXECUTIVE_ATTENTION', label: 'Executive Attention' },
+                    { key: 'FINAL_ESCALATIONS', label: 'Final Escalations' },
+                    { key: 'CRITICAL_CASES', label: 'Critical Cases' },
+                    { key: 'SLA_RISK', label: 'SLA Breaches' },
+                    { key: 'RESOLVED', label: 'Resolved' }
+                  ]
+              ).map(tab => (
                 <button
                   key={tab.key}
                   onClick={() => handleTabChange(tab.key)}
-                  className={`px-2.5 py-1 rounded-lg transition-all whitespace-nowrap ${
+                  className={`px-2.5 py-1 rounded-lg transition-all whitespace-nowrap cursor-pointer ${
                     activeTab === tab.key
                       ? 'bg-[#349670] text-white shadow-2xs font-extrabold'
                       : 'text-[#4A7365] hover:text-[#174437]'
@@ -652,34 +906,62 @@ const OfficerDashboardPage = () => {
           ))}
         </div>
 
-        {/* Error Notification */}
-        {error && (
-          <div className="m-4 p-4 rounded-xl bg-[#FAECEB] border border-[#F3C5BF] text-xs font-bold text-[#A6473D] flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
-
         {/* Queue Items */}
         {loading ? (
           <div className="py-20 text-center space-y-3">
             <RefreshCw className="w-8 h-8 text-[#349670] animate-spin mx-auto" />
             <p className="text-xs font-bold text-[#4A7365]">Loading operational incidents from database...</p>
           </div>
+        ) : error ? (
+          <div className="py-16 text-center space-y-3 px-4">
+            <div className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto bg-[#FAECEB] text-[#A6473D] border border-[#F3C5BF]">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <h3 className="text-sm font-bold text-[#A6473D]">
+              {selectedView === 3
+                ? 'Unable to Load Senior Oversight Incidents'
+                : selectedView === 2
+                ? 'Unable to Load Supervisory Interventions'
+                : 'Unable to Load Operational Incidents'}
+            </h3>
+            <p className="text-xs font-semibold text-[#4A7365] max-w-md mx-auto">
+              {error}
+            </p>
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={fetchIncidents}
+                className="px-4 py-2 rounded-xl bg-[#349670] hover:bg-[#2B8260] text-white font-bold text-xs shadow-2xs transition-all cursor-pointer inline-flex items-center gap-2"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Retry</span>
+              </button>
+            </div>
+          </div>
         ) : filteredIncidents.length === 0 ? (
           <div className="py-16 text-center space-y-2">
-            <div className="w-12 h-12 rounded-2xl bg-[#D5EFE1] text-[#216D51] flex items-center justify-center mx-auto border border-[#B8E0CB]">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto border ${
+              selectedView === 3
+                ? 'bg-[#FAECEB] text-[#A6473D] border-[#F3C5BF]'
+                : selectedView === 2
+                ? 'bg-[#EFE3F5] text-[#734785] border-[#DCBFEC]'
+                : 'bg-[#D5EFE1] text-[#216D51] border-[#B8E0CB]'
+            }`}>
               <CheckCircle className="w-6 h-6" />
             </div>
             <h3 className="text-sm font-bold text-[#1F5443]">
-              {selectedCategory !== 'ALL' ? `No ${selectedCategory.replace('_', ' ')} Incidents Found` : 'No Incidents Found'}
+              {selectedView === 1
+                ? 'No Operational Incidents in Queue'
+                : selectedView === 2
+                ? 'No Supervisory Interventions Active'
+                : 'No Senior Oversight Matters Active'}
             </h3>
-            <p className="text-xs font-semibold text-[#4A7365] max-w-sm mx-auto">
-              {selectedCategory !== 'ALL'
-                ? `No incidents in this category currently match the active filters.`
-                : activeTab === 'ALL'
-                ? 'All active workorders in your ward are clear.'
-                : `No active incidents currently match the '${activeTab.replace('_', ' ')}' filter.`}
+            <p className="text-xs font-semibold text-[#4A7365] max-w-md mx-auto">
+              {selectedView === 1
+                ? 'No workorders in this filter.'
+                : selectedView === 2
+                ? 'No incidents require supervisory intervention.'
+                : 'No matters require senior attention.'}
             </p>
           </div>
         ) : (
@@ -690,93 +972,144 @@ const OfficerDashboardPage = () => {
               const imageUrl = primaryReport?.image_url || '/placeholder-incident.jpg';
               const coords = parseCoordinates(inc.location);
 
-              const levelLabel = inc.current_level === 3 ? 'Commissioner • Level 3' : inc.current_level === 2 ? 'AEE • Level 2' : 'Ward Officer • Level 1';
-              const officerAssigned = inc.assigned_officer_id ? 'Assigned Officer' : 'Unassigned';
-              const deptName = inc.departments?.name || 'Municipal Department';
+              const resp = getResponsibilityForIncident(inc.category, inc.departments?.code);
+              const levelLabel = (inc.current_level || 1) === 3
+                ? resp.seniorAuthority
+                : (inc.current_level || 1) === 2
+                ? resp.supervisoryRole
+                : resp.operationalRole;
+              const officerAssigned = inc.assigned_officer_id ? 'Assigned Field Resolver' : 'Unassigned';
+              const deptName = inc.departments?.name || resp.departmentName;
 
               return (
                 <div
                   key={inc.id}
-                  className="p-5 bg-[#DCF0E6] hover:bg-[#CEEADA] transition-all flex flex-col lg:flex-row lg:items-center justify-between gap-5 group"
+                  className={`p-5 transition-all flex flex-col gap-3 group ${
+                    selectedView === 3
+                      ? 'bg-[#F9ECEB]/50 hover:bg-[#F9ECEB]'
+                      : selectedView === 2
+                      ? 'bg-[#F4EEF7]/50 hover:bg-[#F4EEF7]'
+                      : 'bg-[#DCF0E6] hover:bg-[#CEEADA]'
+                  }`}
                 >
-                  {/* Left Thumbnail & Core Info */}
-                  <div className="flex items-start gap-4 flex-1 min-w-0">
-                    <img
-                      src={imageUrl}
-                      alt={inc.category}
-                      className="w-20 h-20 rounded-xl object-cover border border-[#B8E0CB] shrink-0 bg-[#E6F4ED] shadow-2xs"
-                      onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?w=300'; }}
-                    />
+                  {/* Level 2 Supervisory Context Banner */}
+                  {selectedView === 2 && (
+                    <div className="p-2.5 px-3.5 rounded-xl bg-[#EFE3F5] border border-[#DCBFEC] flex items-center justify-between text-xs font-bold text-[#734785] flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-[#734785] shrink-0" />
+                        <span>Escalated from L1 — {resp.supervisoryShort}</span>
+                      </div>
+                      <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-white/80 text-[#553363] border border-[#DCBFEC]">
+                        Intervention Required
+                      </span>
+                    </div>
+                  )}
 
-                    <div className="space-y-1.5 flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-black text-sm text-[#1F5443] tracking-tight uppercase">
-                          {inc.category || 'Civic Incident'}
-                        </span>
-                        <PriorityBadge priority={inc.priority_level} score={inc.priority_score} />
-                        <StatusBadge status={inc.status} />
+                  {/* Level 3 Senior Administrative Context Banner */}
+                  {selectedView === 3 && (
+                    <div className="p-2.5 px-3.5 rounded-xl bg-[#FAECEB] border border-[#F3C5BF] flex items-center justify-between text-xs font-bold text-[#A6473D] flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <ShieldAlert className="w-4 h-4 text-[#A6473D] shrink-0" />
+                        <span>Escalated from L2 — {resp.seniorShort}</span>
+                      </div>
+                      <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-white/80 text-[#7A2A22] border border-[#F3C5BF]">
+                        {inc.status === 'SLA_BREACHED' ? 'Terminal Breach' : 'Senior Attention'}
+                      </span>
+                    </div>
+                  )}
 
-                        {inc.current_level > 1 && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#EFE3F5] text-[#734785] border border-[#DCBFEC]">
-                            LEVEL {inc.current_level}
+                  {selectedView === 3 && inc.status === 'SLA_BREACHED' && (
+                    <div className="text-[11px] font-bold text-[#A6473D] bg-white/80 p-2 px-3 rounded-xl border border-[#F3C5BF]">
+                      ⚠️ Terminal tier — no higher authority level. Persistent breach recorded.
+                    </div>
+                  )}
+
+                  {/* Main Incident Card Row */}
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+                    {/* Left Thumbnail & Core Info */}
+                    <div className="flex items-start gap-4 flex-1 min-w-0">
+                      <img
+                        src={imageUrl}
+                        alt={inc.category}
+                        className="w-20 h-20 rounded-xl object-cover border border-[#B8E0CB] shrink-0 bg-[#E6F4ED] shadow-2xs"
+                        onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?w=300'; }}
+                      />
+
+                      <div className="space-y-1.5 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-black text-sm text-[#1F5443] tracking-tight uppercase">
+                            {inc.category || 'Civic Incident'}
                           </span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-1.5 text-xs font-semibold text-[#4A7365]">
-                        <MapPin className="w-3.5 h-3.5 text-[#75998C] shrink-0" />
-                        <span className="truncate">{inc.address || `Location (${coords?.lat || '14.46'}, ${coords?.lng || '75.92'})`}</span>
-                      </div>
-
-                      <div className="flex items-center gap-4 text-[11px] font-semibold text-[#4A7365] flex-wrap">
-                        <div>
-                          <span className="text-[#75998C] font-bold uppercase tracking-wider text-[9px] mr-1">DEPARTMENT:</span>
-                          <span className="text-[#174437] font-bold">{deptName}</span>
+                          <PriorityBadge priority={inc.priority_level} score={inc.priority_score} />
+                          <StatusBadge status={inc.status} />
                         </div>
-                        <div>
-                          <span className="text-[#75998C] font-bold uppercase tracking-wider text-[9px] mr-1">OFFICER:</span>
-                          <span className={`font-bold ${inc.assigned_officer_id ? 'text-[#216D51]' : 'text-[#9C621E]'}`}>
-                            {officerAssigned}
-                          </span>
+
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-[#4A7365]">
+                          <MapPin className="w-3.5 h-3.5 text-[#75998C] shrink-0" />
+                          <span className="truncate">{inc.address || `Location (${coords?.lat || '14.46'}, ${coords?.lng || '75.92'})`}</span>
                         </div>
-                        <div>
-                          <span className="text-[#75998C] font-bold uppercase tracking-wider text-[9px] mr-1">REPORTS:</span>
-                          <span className="text-[#174437] font-bold">{reportCount} citizen {reportCount === 1 ? 'report' : 'reports'}</span>
+
+                        <div className="flex items-center gap-4 text-[11px] font-semibold text-[#4A7365] flex-wrap">
+                          <div>
+                            <span className="text-[#75998C] font-bold uppercase tracking-wider text-[9px] mr-1">DEPARTMENT:</span>
+                            <span className="text-[#174437] font-bold">{deptName}</span>
+                          </div>
+
+                          {selectedView === 2 ? (
+                            <div>
+                              <span className="text-[#75998C] font-bold uppercase tracking-wider text-[9px] mr-1">OPERATIONAL RESOLVER:</span>
+                              <span className={`font-bold ${inc.assigned_officer_id ? 'text-[#216D51]' : 'text-[#9C621E]'}`}>
+                                {officerAssigned}
+                              </span>
+                            </div>
+                          ) : (
+                            <div>
+                              <span className="text-[#75998C] font-bold uppercase tracking-wider text-[9px] mr-1">RESOLVER:</span>
+                              <span className={`font-bold ${inc.assigned_officer_id ? 'text-[#216D51]' : 'text-[#9C621E]'}`}>
+                                {officerAssigned}
+                              </span>
+                            </div>
+                          )}
+
+                          <div>
+                            <span className="text-[#75998C] font-bold uppercase tracking-wider text-[9px] mr-1">REPORTS:</span>
+                            <span className="text-[#174437] font-bold">{reportCount} citizen {reportCount === 1 ? 'report' : 'reports'}</span>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Middle SLA & Authority Owner */}
-                  <div className="flex items-center gap-6 self-stretch lg:self-auto justify-between lg:justify-end pt-3 lg:pt-0 border-t lg:border-t-0 border-[#B8E0CB]/60">
-                    <div className="space-y-1 text-left lg:text-right">
-                      <div className="text-[10px] font-bold text-[#75998C] uppercase tracking-wider">
-                        CURRENT RESPONSIBILITY
+                    {/* Middle SLA & Authority Owner */}
+                    <div className="flex items-center gap-6 self-stretch lg:self-auto justify-between lg:justify-end pt-3 lg:pt-0 border-t lg:border-t-0 border-[#B8E0CB]/60">
+                      <div className="space-y-1 text-left lg:text-right">
+                        <div className="text-[10px] font-bold text-[#75998C] uppercase tracking-wider">
+                          CURRENT RESPONSIBILITY
+                        </div>
+                        <div className="text-xs font-black text-[#174437] flex items-center gap-1.5 lg:justify-end">
+                          <UserCheck className="w-3.5 h-3.5 text-[#349670]" />
+                          <span>{levelLabel}</span>
+                        </div>
+                        <div className="text-[10px] font-mono text-[#75998C]">
+                          ID: #{inc.id.substring(0, 8)}
+                        </div>
                       </div>
-                      <div className="text-xs font-black text-[#174437] flex items-center gap-1.5 lg:justify-end">
-                        <UserCheck className="w-3.5 h-3.5 text-[#349670]" />
-                        <span>{levelLabel}</span>
+
+                      <div className="space-y-1 text-right">
+                        <div className="text-[10px] font-bold text-[#75998C] uppercase tracking-wider">
+                          SLA DEADLINE
+                        </div>
+                        <SlaTimer deadline={inc.sla_deadline} status={inc.status} />
                       </div>
-                      <div className="text-[10px] font-mono text-[#75998C]">
-                        ID: #{inc.id.substring(0, 8)}
-                      </div>
+
+                      {/* Primary Button */}
+                      <Link
+                        to={`/officer/incidents/${inc.id}`}
+                        className="px-4 py-2.5 rounded-xl bg-[#349670] hover:bg-[#2B8260] text-white font-extrabold text-xs shadow-2xs transition-all flex items-center gap-1.5 shrink-0 group-hover:scale-[1.02] cursor-pointer"
+                      >
+                        <span>Open Incident</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </Link>
                     </div>
-
-                    <div className="space-y-1 text-right">
-                      <div className="text-[10px] font-bold text-[#75998C] uppercase tracking-wider">
-                        SLA DEADLINE
-                      </div>
-                      <SlaTimer deadline={inc.sla_deadline} status={inc.status} />
-                    </div>
-
-                    {/* Primary Button */}
-                    <Link
-                      to={`/officer/incidents/${inc.id}`}
-                      className="px-4 py-2.5 rounded-xl bg-[#349670] hover:bg-[#2B8260] text-white font-extrabold text-xs shadow-2xs transition-all flex items-center gap-1.5 shrink-0 group-hover:scale-[1.02]"
-                    >
-                      <span>Open Incident</span>
-                      <ChevronRight className="w-4 h-4" />
-                    </Link>
                   </div>
                 </div>
               );
